@@ -141,6 +141,82 @@ for (const version of ["2026-07-28", "2025-11-25"])
       await f.close();
     }
   });
+test("MCP correct_moment uses normalized snapshots and reports title-only changes", async () => {
+  const f = await fixture({ listen: true });
+  let c: Client | undefined;
+  try {
+    c = await client(f.config.publicOrigin, f.token);
+    const recorded = await c.callTool({
+      name: "record_moment",
+      arguments: momentInput({
+        happenedAt: "2026-10-01T10:00:45+08:00",
+        emotions: [{ key: "embarrassed" }],
+      }),
+    });
+    assert.ok(!recorded.isError, JSON.stringify(recorded));
+    const id = (recorded.structuredContent as any).data.moment.id;
+    const unchanged = await c.callTool({
+      name: "correct_moment",
+      arguments: {
+        clientRequestId: "correct-noop-01",
+        momentId: id,
+        expectedRevision: 1,
+        changes: {
+          happenedAt: "2026-10-01T02:00:45.000Z",
+          happenedAtPrecision: "exact",
+          emotions: [{ key: "embarrassed" }],
+        },
+      },
+    });
+    assert.ok(!unchanged.isError, JSON.stringify(unchanged));
+    assert.equal((unchanged.structuredContent as any).data.revision, 1);
+    assert.deepEqual(
+      (unchanged.structuredContent as any).data.changedFields,
+      [],
+    );
+    const title = await c.callTool({
+      name: "correct_moment",
+      arguments: {
+        clientRequestId: "correct-title-01",
+        momentId: id,
+        expectedRevision: 1,
+        changes: { title: "更正标题" },
+      },
+    });
+    assert.ok(!title.isError, JSON.stringify(title));
+    assert.equal((title.structuredContent as any).data.revision, 2);
+    assert.deepEqual((title.structuredContent as any).data.changedFields, ["title"]);
+    const dateRecorded = await c.callTool({
+      name: "record_moment",
+      arguments: momentInput({
+        narrative: "日期精度测试原话",
+        happenedAt: "2026-10-01",
+        emotions: [{ key: "embarrassed" }],
+      }),
+    });
+    assert.ok(!dateRecorded.isError, JSON.stringify(dateRecorded));
+    const dateId = (dateRecorded.structuredContent as any).data.moment.id;
+    const sameDate = await c.callTool({
+      name: "correct_moment",
+      arguments: {
+        clientRequestId: "correct-date-noop-01",
+        momentId: dateId,
+        expectedRevision: 1,
+        changes: {
+          happenedAt: "2026-10-01",
+          happenedAtPrecision: "day",
+          emotions: [{ key: "embarrassed" }],
+        },
+      },
+    });
+    assert.ok(!sameDate.isError, JSON.stringify(sameDate));
+    assert.equal((sameDate.structuredContent as any).data.revision, 1);
+    assert.deepEqual((sameDate.structuredContent as any).data.changedFields, []);
+  } finally {
+    await c?.close();
+    await f.close();
+  }
+});
 test("作用域工具可见性、只写归属隔离和正文裁剪", async () => {
   const f = await fixture({ listen: true });
   const clients: Client[] = [];

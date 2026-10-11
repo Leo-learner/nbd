@@ -185,6 +185,34 @@ test("Agent 冻结边界、修订原文、冲突和所有者更正", async () =>
     await f.close();
   }
 });
+test("规范化后的重复内容不创建修订，标题单字段只标记标题", async () => {
+  const f = await fixture();
+  try {
+    const id = f.s.moments.record(
+      f.agent,
+      momentInput({
+        happenedAt: "2026-10-01T10:00:45+08:00",
+        emotions: [{ key: "embarrassed" }],
+      }),
+    ).moment.id;
+    const unchanged = f.s.moments.patch(f.agent, id, {
+      expectedRevision: 1,
+      happenedAt: "2026-10-01T02:00:45.000Z",
+      happenedAtPrecision: "exact",
+      emotions: [{ key: "embarrassed" }],
+    });
+    assert.equal(unchanged.revision, 1);
+    assert.deepEqual(unchanged.changedFields, []);
+    const title = f.s.moments.patch(f.agent, id, {
+      expectedRevision: 1,
+      title: "更正标题",
+    });
+    assert.equal(title.revision, 2);
+    assert.deepEqual(title.changedFields, ["title"]);
+  } finally {
+    await f.close();
+  }
+});
 test("内容去重仅在同一主体、24 小时内生效", async () => {
   const f = await fixture();
   try {

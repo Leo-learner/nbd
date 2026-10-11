@@ -20,6 +20,16 @@ import {
   type ResponseOf,
 } from "../api";
 import {
+  applyConflictChoice,
+  buildPatch,
+  changedSnapshotFields,
+  rebaseDraft,
+  versionProvenance,
+  type EditDraft,
+  type EditMergeGroup,
+  type MomentSnapshot,
+} from "../editing";
+import {
   Button,
   Card,
   EmptyState,
@@ -40,7 +50,6 @@ import type { operations } from "../../../sdk/generated";
 type ListResponse = ResponseOf<"listMoments">;
 type RevisionResponse = ResponseOf<"listMomentRevisions">;
 type Revision = RevisionResponse["items"][number];
-type Snapshot = Revision["snapshot"];
 type Note = MomentDetail["notes"][number];
 type Reflection = MomentDetail["reflections"][number];
 type Lesson = MomentDetail["lessons"][number];
@@ -53,12 +62,10 @@ type RequestBody<K extends keyof operations> = operations[K] extends {
 }
   ? Body
   : never;
-type UpdateMomentBody = RequestBody<"updateMoment">;
 type CreateReflectionBody = RequestBody<"createReflection">;
 type UpdateReflectionBody = RequestBody<"updateReflection">;
-type Scene = UpdateMomentBody["scene"];
-type Precision = NonNullable<UpdateMomentBody["happenedAtPrecision"]>;
-type EmotionDraft = { key: string; intensity: string };
+type Snapshot = MomentSnapshot;
+type Precision = EditDraft["precision"];
 type FilterStatus =
   "" | "fresh" | "cooling" | "reflected" | "settled" | "archived";
 
@@ -714,26 +721,6 @@ function IntensityChart({
   );
 }
 
-type EditDraft = {
-  title: string;
-  narrative: string;
-  agentSummary: string;
-  precision: Precision;
-  happenedOn: string;
-  happenedLocal: string;
-  scene: string;
-  emotions: EmotionDraft[];
-  intensity: string;
-  severity: string;
-  fearedOutcome: string;
-  outcomeKnownBy: string;
-  thoughts: string;
-  bodySignals: string;
-  immediateResponse: string;
-  people: string[];
-  reason: string;
-};
-
 function makeEditDraft(detail: MomentDetail, timezone: string): EditDraft {
   return {
     title: detail.title,
@@ -759,6 +746,54 @@ function makeEditDraft(detail: MomentDetail, timezone: string): EditDraft {
   };
 }
 
+function editGroupTitle(group: EditMergeGroup) {
+  if (group === "time") return "发生时间与日期";
+  return SNAPSHOT_FIELDS.find((field) => field.key === group)?.title ?? group;
+}
+
+function editGroupValue(
+  group: EditMergeGroup,
+  draft: EditDraft,
+  meta: ReturnType<typeof useApp>["meta"],
+  timezone: string,
+) {
+  if (group === "time")
+    return draft.precision === "exact"
+      ? `${draft.happenedLocal} · ${label(meta, "precision", "exact")}`
+      : `${draft.happenedOn} · ${label(meta, "precision", draft.precision)}`;
+  if (group === "emotions")
+    return (
+      draft.emotions
+        .map(
+          (item) =>
+            `${label(meta, "emotion", item.key)}${item.intensity.trim() ? ` ${item.intensity}` : ""}`,
+        )
+        .join(" · ") || "—"
+    );
+  if (group === "scene") return label(meta, "scene", draft.scene);
+  if (group === "people")
+    return draft.people.map((person) => person.trim()).filter(Boolean).join("、") || "—";
+  if (group === "intensity") return `${draft.intensity}/10`;
+  if (group === "severity")
+    return draft.severity.trim() ? `${draft.severity}/10` : "—";
+  if (group === "outcomeKnownBy")
+    return draft.outcomeKnownBy ? localDate(draft.outcomeKnownBy) : "—";
+  const value = draft[group];
+  return typeof value === "string" && value.trim() ? value : "—";
+}
+
+function snapshotGroupValue(
+  group: EditMergeGroup,
+  snapshot: Snapshot,
+  meta: ReturnType<typeof useApp>["meta"],
+  timezone: string,
+) {
+  if (group === "time")
+    return `${normalizeSnapshotValue("happenedAt", snapshot.happenedAt, meta, timezone)} · ${normalizeSnapshotValue("happenedAtPrecision", snapshot.happenedAtPrecision, meta, timezone)}`;
+  const field = group as keyof Snapshot;
+  return normalizeSnapshotValue(field, snapshot[field], meta, timezone);
+}
+
 function MomentEditor({
   detail,
   onClose,
@@ -769,6 +804,12 @@ function MomentEditor({
   onSaved: () => void;
 }) {
   const { meta, user, confirm, notify } = useApp();
+  const [baseDraft, setBaseDraft] = useState(() =>
+    makeEditDraft(detail, user.timezone),
+  );
+  const [baseSnapshot, setBaseSnapshot] = useState(() =>
+    currentSnapshot(detail),
+  );
   const [draft, setDraft] = useState(() =>
     makeEditDraft(detail, user.timezone),
   );
@@ -776,10 +817,21 @@ function MomentEditor({
   const [error, setError] = useState<unknown>();
   const [conflict, setConflict] = useState(false);
   const [expectedRevision, setExpectedRevision] = useState(detail.revision);
-  const [serverVersion, setServerVersion] = useState<MomentDetail | null>(null);
+  const [conflictInfo, setConflictInfo] = useState<{
+    serverVersion: MomentDetail;
+    serverFields: (keyof Snapshot)[];
+    overlaps: EditMergeGroup[];
+    mine: EditDraft;
+  } | null>(null);
+  const [mergeChoices, setMergeChoices] = useState<
+    Partial<Record<EditMergeGroup, "current" | "mine">>
+  >({});
   const update = <K extends keyof EditDraft>(key: K, value: EditDraft[K]) =>
     setDraft((current) => ({ ...current, [key]: value }));
   const frozen = Date.now() >= new Date(detail.editableUntil).getTime();
+  const needsMergeChoice = Boolean(
+    conflictInfo?.overlaps.some((field) => !mergeChoices[field]),
+  );
   const toggleEmotion = (key: string) => {
     setDraft((current) =>
       current.emotions.some((item) => item.key === key)
@@ -808,6 +860,28 @@ function MomentEditor({
       return;
     }
     if (
+      conflictInfo?.overlaps.some((field) => !mergeChoices[field])
+    ) {
+      setError(new Error("请先逐项选择重叠字段采用当前版本还是保留你的输入。"));
+      return;
+    }
+    let body;
+    try {
+      body = buildPatch(baseDraft, draft, expectedRevision, (value) =>
+        value.precision === "exact"
+          ? localDateTimeToISO(value.happenedLocal, user.timezone)
+          : value.happenedOn,
+      );
+    } catch (caught) {
+      setError(caught);
+      return;
+    }
+    if (!body) {
+      notify("没有改动，编辑窗口已关闭");
+      onClose();
+      return;
+    }
+    if (
       frozen &&
       !(await confirm(
         "这条记录已过更正期",
@@ -817,35 +891,6 @@ function MomentEditor({
       return;
     setBusy(true);
     try {
-      const body: UpdateMomentBody = {
-        expectedRevision,
-        reason: draft.reason.trim() || undefined,
-        title: draft.title.trim(),
-        narrative: draft.narrative,
-        agentSummary: draft.agentSummary.trim() || null,
-        happenedAt:
-          draft.precision === "exact"
-            ? localDateTimeToISO(draft.happenedLocal, user.timezone)
-            : draft.happenedOn,
-        happenedAtPrecision: draft.precision,
-        scene: draft.scene as Scene,
-        emotions: draft.emotions.map((item) => ({
-          key: item.key as NonNullable<
-            UpdateMomentBody["emotions"]
-          >[number]["key"],
-          ...(item.intensity.trim()
-            ? { intensity: Number(item.intensity) }
-            : {}),
-        })),
-        intensity: Number(draft.intensity),
-        severity: draft.severity.trim() ? Number(draft.severity) : null,
-        fearedOutcome: draft.fearedOutcome.trim() || null,
-        outcomeKnownBy: draft.outcomeKnownBy || null,
-        thoughts: draft.thoughts.trim() || null,
-        bodySignals: draft.bodySignals.trim() || null,
-        immediateResponse: draft.immediateResponse.trim() || null,
-        people: draft.people.map((person) => person.trim()).filter(Boolean),
-      };
       await api("PATCH", `/moments/${detail.id}`, body);
       notify("原始记录已更新");
       onSaved();
@@ -859,16 +904,71 @@ function MomentEditor({
   };
   const reloadConflict = async () => {
     try {
-      const current = await api<MomentDetail>("GET", `/moments/${detail.id}`);
-      // Keep the user's draft intact while rebasing the optimistic revision token.
+      let current: MomentDetail | null = null;
+      let history: RevisionResponse | null = null;
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        current = await api<MomentDetail>("GET", `/moments/${detail.id}`);
+        history = await api<RevisionResponse>(
+          "GET",
+          `/moments/${detail.id}/revisions`,
+        );
+        if (current.revision === history.current) break;
+      }
+      if (!current || !history || current.revision !== history.current)
+        throw new Error("记录还在变化，请稍后重新加载当前版本。");
+      const mine = { ...draft };
+      const latestDraft = makeEditDraft(current, user.timezone);
+      const latestSnapshot = currentSnapshot(current);
+      const serverFields = new Set(
+        [
+          ...history.items
+            .filter((item) => item.revision >= expectedRevision)
+            .flatMap((item) => item.changedFields),
+          ...changedSnapshotFields(baseSnapshot, latestSnapshot),
+        ],
+      );
+      const orderedServerFields = SNAPSHOT_FIELDS.map((field) => field.key).filter(
+        (field) => serverFields.has(field),
+      );
+      const rebased = rebaseDraft(
+        baseDraft,
+        mine,
+        latestDraft,
+        serverFields,
+      );
+      setBaseDraft(latestDraft);
+      setBaseSnapshot(latestSnapshot);
+      setDraft(rebased.draft);
       setExpectedRevision(current.revision);
-      setServerVersion(current);
+      setConflictInfo({
+        serverVersion: current,
+        serverFields: orderedServerFields,
+        overlaps: rebased.overlaps,
+        mine,
+      });
+      setMergeChoices({});
       setConflict(false);
       setError(undefined);
       notify(`已重新加载当前版本（第 ${current.revision} 版）；你的输入仍保留`);
     } catch (caught) {
       setError(caught);
     }
+  };
+  const chooseOverlap = (
+    field: EditMergeGroup,
+    choice: "current" | "mine",
+  ) => {
+    if (!conflictInfo) return;
+    setDraft((current) =>
+      applyConflictChoice(
+        current,
+        baseDraft,
+        conflictInfo.mine,
+        field,
+        choice,
+      ),
+    );
+    setMergeChoices((current) => ({ ...current, [field]: choice }));
   };
   const sceneOptions = meta.enums.scene;
   return (
@@ -1129,28 +1229,96 @@ function MomentEditor({
         {conflict && (
           <div className="conflict-panel">
             <p>
-              这条记录已经被另一处修改。你的输入仍保留；重新加载当前版本后可以检查并再次保存。
+              这条记录已经被另一处修改。重新加载后会保留互不冲突的输入；重叠字段需要你明确选择采用哪一方。
             </p>
             <Button onClick={reloadConflict}>重新加载当前版本</Button>
           </div>
         )}
-        {serverVersion && (
+        {conflictInfo && (
           <div className="conflict-panel">
-            <strong>当前版本：第 {serverVersion.revision} 版</strong>
-            <p>
-              <b>标题：</b>
-              {serverVersion.title}
-            </p>
-            <p className="narrative">
-              <b>原话：</b>
-              {serverVersion.narrative}
-            </p>
-            <small>你编辑中的字段仍保留在上方表单。确认合并后再保存。</small>
+            <strong>当前版本：第 {conflictInfo.serverVersion.revision} 版</strong>
+            {conflictInfo.serverFields.length > 0 ? (
+              <>
+                <p>
+                  对方修改的字段：
+                  {conflictInfo.serverFields
+                    .map(
+                      (key) =>
+                        SNAPSHOT_FIELDS.find((field) => field.key === key)
+                          ?.title ?? key,
+                    )
+                    .join("、")}
+                </p>
+                <div className="conflict-values">
+                  {conflictInfo.serverFields.map((key) => {
+                    const snapshot = currentSnapshot(conflictInfo.serverVersion);
+                    return (
+                      <p key={key}>
+                        <b>
+                          {SNAPSHOT_FIELDS.find((field) => field.key === key)
+                            ?.title ?? key}
+                          ：
+                        </b>
+                        {normalizeSnapshotValue(
+                          key,
+                          snapshot[key],
+                          meta,
+                          user.timezone,
+                        )}
+                      </p>
+                    );
+                  })}
+                </div>
+              </>
+            ) : (
+              <p>对方的更改与当前内容一致。</p>
+            )}
+            {conflictInfo.overlaps.length > 0 && (
+              <section className="conflict-overlaps">
+                <strong>与你的修改重叠</strong>
+                <p>每项都要明确选择。默认先显示服务器当前值，不会直接提交你的旧值。</p>
+                {conflictInfo.overlaps.map((field) => {
+                  const choice = mergeChoices[field];
+                  const snapshot = currentSnapshot(conflictInfo.serverVersion);
+                  return (
+                    <div className="conflict-overlap" key={field}>
+                      <b>{editGroupTitle(field)}</b>
+                      <p>你的输入：{editGroupValue(field, conflictInfo.mine, meta, user.timezone)}</p>
+                      <p>当前版本：{snapshotGroupValue(field, snapshot, meta, user.timezone)}</p>
+                      <div className="actions">
+                        <Button
+                          aria-pressed={choice === "current"}
+                          onClick={() => chooseOverlap(field, "current")}
+                        >
+                          采用当前版本
+                        </Button>
+                        <Button
+                          aria-pressed={choice === "mine"}
+                          onClick={() => chooseOverlap(field, "mine")}
+                        >
+                          保留我的输入
+                        </Button>
+                        <small>
+                          {choice === "current"
+                            ? "已选择当前版本"
+                            : choice === "mine"
+                              ? "已选择你的输入"
+                              : "尚未选择"}
+                        </small>
+                      </div>
+                    </div>
+                  );
+                })}
+              </section>
+            )}
+            <small>
+              未重叠的输入已保留。{needsMergeChoice ? "选择完重叠字段后才能保存。" : "可以继续检查并保存。"}
+            </small>
           </div>
         )}
         <div className="actions">
           <Button onClick={onClose}>取消</Button>
-          <Button tone="primary" type="submit" disabled={busy}>
+          <Button tone="primary" type="submit" disabled={busy || needsMergeChoice}>
             {busy ? "正在保存…" : "保存修改"}
           </Button>
         </div>
@@ -2539,8 +2707,6 @@ function RevisionsPageContent({ id }: { id: string }) {
     selectedRevision === moment?.revision
       ? current
       : (selectedOld?.snapshot ?? current);
-  const currentAuthor =
-    moment?.lastEditedBy?.label ?? moment?.source.label ?? "我";
   if ((momentState.loading && !moment) || (revisionsState.loading && !history))
     return <Loading />;
   if (momentState.error && !moment)
@@ -2551,13 +2717,21 @@ function RevisionsPageContent({ id }: { id: string }) {
     );
   if (!moment || !history || !snapshot || !current) return null;
   const selectedIsCurrent = selectedRevision === moment.revision;
-  const author = selectedIsCurrent
-    ? currentAuthor
-    : (selectedOld?.editedBy.label ?? "我");
-  const editedAt = selectedIsCurrent
-    ? (moment.lastEditedAt ?? moment.capturedAt)
-    : (selectedOld?.editedAt ?? moment.capturedAt);
-  const reason = selectedIsCurrent ? null : selectedOld?.reason;
+  const selectedProvenance = versionProvenance(
+    selectedRevision ?? moment.revision,
+    moment.capturedAt,
+    moment.source.label,
+    history.items,
+  );
+  const currentProvenance = versionProvenance(
+    moment.revision,
+    moment.capturedAt,
+    moment.source.label,
+    history.items,
+  );
+  const author = selectedProvenance.author;
+  const editedAt = selectedProvenance.at;
+  const reason = selectedProvenance.reason;
   const changed = new Set(
     SNAPSHOT_FIELDS.filter(
       (field) =>
@@ -2565,10 +2739,6 @@ function RevisionsPageContent({ id }: { id: string }) {
         JSON.stringify(current[field.key]),
     ).map((field) => field.key),
   );
-  const changeNames =
-    selectedOld?.changedFields.map(
-      (key) => SNAPSHOT_FIELDS.find((field) => field.key === key)?.title ?? key,
-    ) ?? [];
   return (
     <div className="page-shell revisions-page">
       <a
@@ -2599,51 +2769,77 @@ function RevisionsPageContent({ id }: { id: string }) {
               <span className="current-version-label">当前版本</span>
             </strong>
             <span>
-              {instant(moment.lastEditedAt ?? moment.capturedAt, user.timezone)}{" "}
-              · {currentAuthor} 修改
+              来源：{currentProvenance.source} ·{" "}
+              {instant(currentProvenance.at, user.timezone)}
+              {currentProvenance.author
+                ? ` · ${currentProvenance.author}`
+                : ""}
             </span>
-            {moment.revisionCount === 0 && <small>最初的记录</small>}
+            {currentProvenance.changedFields.length > 0 && (
+              <small>
+                此版改动：
+                {currentProvenance.changedFields
+                  .map(
+                    (key) =>
+                      SNAPSHOT_FIELDS.find((field) => field.key === key)?.title ??
+                      key,
+                  )
+                  .join("、")}
+              </small>
+            )}
+            {currentProvenance.reason && (
+              <small>原因：{currentProvenance.reason}</small>
+            )}
           </button>
-          {oldVersions.map((version) => (
-            <button
-              type="button"
-              key={version.revision}
-              aria-pressed={selectedRevision === version.revision}
-              className={`version-button ${selectedRevision === version.revision ? "selected-version" : ""}`}
-              onClick={() => setSelectedRevision(version.revision)}
-            >
-              <strong>
-                第 {version.revision} 版{" "}
-                {version.revision === 1 && (
-                  <span className="original-version-label">最初的记录</span>
+          {oldVersions.map((version) => {
+            const provenance = versionProvenance(
+              version.revision,
+              moment.capturedAt,
+              moment.source.label,
+              history.items,
+            );
+            return (
+              <button
+                type="button"
+                key={version.revision}
+                aria-pressed={selectedRevision === version.revision}
+                className={`version-button ${selectedRevision === version.revision ? "selected-version" : ""}`}
+                onClick={() => setSelectedRevision(version.revision)}
+              >
+                <strong>
+                  第 {version.revision} 版{" "}
+                  {version.revision === 1 && (
+                    <span className="original-version-label">最初的记录</span>
+                  )}
+                </strong>
+                <span>
+                  来源：{provenance.source} · {instant(provenance.at, user.timezone)}
+                  {provenance.author ? ` · ${provenance.author}` : ""}
+                </span>
+                {provenance.changedFields.length > 0 && (
+                  <small>
+                    此版改动：
+                    {provenance.changedFields
+                      .map(
+                        (key) =>
+                          SNAPSHOT_FIELDS.find((field) => field.key === key)
+                            ?.title ?? key,
+                      )
+                      .join("、")}
+                  </small>
                 )}
-              </strong>
-              <span>
-                {instant(version.editedAt, user.timezone)} ·{" "}
-                {version.editedBy.label} 更正
-              </span>
-              {version.changedFields.length > 0 && (
-                <small>
-                  改了：
-                  {version.changedFields
-                    .map(
-                      (key) =>
-                        SNAPSHOT_FIELDS.find((field) => field.key === key)
-                          ?.title ?? key,
-                    )
-                    .join("、")}
-                </small>
-              )}
-              {version.reason && <small>原因：{version.reason}</small>}
-            </button>
-          ))}
+                {provenance.reason && <small>原因：{provenance.reason}</small>}
+              </button>
+            );
+          })}
         </aside>
         <main className="revision-snapshot">
           <div className="section-heading">
             <div>
               <h2>第 {selectedRevision} 版</h2>
               <p>
-                {instant(editedAt, user.timezone)} · {author}
+                {instant(editedAt, user.timezone)}
+                {author ? ` · ${author}` : ""}
               </p>
             </div>
             <div className="snapshot-legend">
