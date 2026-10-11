@@ -1,0 +1,138 @@
+{
+  "summary": "事件详情：复盘过一次、Agent 在冻结期内更正过一次",
+  "operationId": "getMoment",
+  "kind": "response",
+  "status": 200,
+  "schema": "MomentDetail",
+  "value": {
+    "id": "6f1c2a9e-3b7d-4c51-9a2e-0d8f4b6c1a72",
+    "title": "周会上把新领导的名字叫错了",
+    "happenedAt": "2026-09-28T02:30:00.000Z",
+    "happenedOn": "2026-09-28",
+    "happenedAtPrecision": "exact",
+    "capturedAt": "2026-09-28T04:12:45.120Z",
+    "scene": "work",
+    "emotions": [
+      {
+        "key": "embarrassed",
+        "intensity": 8
+      },
+      {
+        "key": "anxious",
+        "intensity": 6
+      }
+    ],
+    "intensity": 8,
+    "severity": 6,
+    "latestIntensityNow": 3,
+    "latestResolution": "easing",
+    "status": "reflected",
+    "nextReviewOn": null,
+    "tags": [
+      "工作",
+      "第一印象"
+    ],
+    "noteCount": 1,
+    "reflectionCount": 1,
+    "lessonCount": 1,
+    "hasFear": true,
+    "source": {
+      "kind": "oauth_app",
+      "id": "c8a4e2f6-0d7b-4c15-9e3a-5b8f1d6c2a07",
+      "label": "Claude"
+    },
+    "narrative": "今天周会轮到我汇报，我开口就说「谢谢王总」，结果新来的领导姓汪，不姓王。会议室安静了两秒，有人笑了一下，我脸一下子就烧起来了，后面讲什么都有点结巴。散会以后我一直在想，他会不会觉得我根本不上心，连他名字都记不住。",
+    "agentSummary": "周会汇报时把新领导的姓叫错（汪→王），当场很尴尬，担心对方觉得自己不用心。",
+    "fearedOutcome": "新领导觉得我做事不上心，以后对我有成见。",
+    "outcomeKnownBy": null,
+    "thoughts": "完了，第一印象全毁了。",
+    "bodySignals": "脸发烫，心跳很快",
+    "immediateResponse": "硬着头皮讲完，散会后没敢去解释。",
+    "people": [
+      "新领导",
+      "同事"
+    ],
+    "revision": 2,
+    "revisionCount": 1,
+    "editableUntil": "2026-09-29T04:12:45.120Z",
+    "lastEditedAt": "2026-09-28T04:20:03.004Z",
+    "lastEditedBy": {
+      "kind": "oauth_app",
+      "id": "c8a4e2f6-0d7b-4c15-9e3a-5b8f1d6c2a07",
+      "label": "Claude"
+    },
+    "snoozedUntil": null,
+    "reviewStep": {
+      "done": 1,
+      "total": 0,
+      "current": 0
+    },
+    "archivedAt": null,
+    "deletedAt": null,
+    "purgeAt": null,
+    "notes": [
+      {
+        "id": "a3f6c8e1-2b4d-4d79-b5a0-6e1c9f8d2b47",
+        "momentId": "6f1c2a9e-3b7d-4c51-9a2e-0d8f4b6c1a72",
+        "body": "下午汪总在群里回了我的周报，说「思路清楚，按这个推进」，好像完全没在意上午的事。",
+        "author": {
+          "kind": "oauth_app",
+          "id": "c8a4e2f6-0d7b-4c15-9e3a-5b8f1d6c2a07",
+          "label": "Claude"
+        },
+        "createdAt": "2026-09-28T09:40:00.000Z"
+      }
+    ],
+    "reflections": [
+      {
+        "id": "e7c3a1b9-5d2f-4a60-9b8e-3f1d0c7a6e25",
+        "momentId": "6f1c2a9e-3b7d-4c51-9a2e-0d8f4b6c1a72",
+        "intensityNow": 3,
+        "severityNow": 2,
+        "fearCameTrue": "no",
+        "whatHappened": "第二天汪总照常找我对接项目，还问我周末去哪玩了，完全没提这件事。",
+        "perspective": "叫错一个字的姓，在别人那里可能就是两秒钟的事，只有我自己在反复回放。",
+        "thinkingTraps": [
+          "spotlight",
+          "catastrophizing"
+        ],
+        "resolution": "easing",
+        "reflectedOn": "2026-10-02",
+        "daysSinceHappened": 4,
+        "lessonIds": [
+          "b3e1d7a5-4c9f-4a28-8f6b-1d0e7c3a9b56"
+        ],
+        "author": {
+          "kind": "owner",
+          "id": null,
+          "label": "我"
+        },
+        "createdAt": "2026-10-02T13:05:00.000Z",
+        "updatedAt": "2026-10-02T13:05:00.000Z"
+      }
+    ],
+    "lessons": [
+      {
+        "id": "b3e1d7a5-4c9f-4a28-8f6b-1d0e7c3a9b56",
+        "title": "别人记得的远比我以为的少"
+      }
+    ],
+    "intensitySeries": [
+      {
+        "on": "2026-09-28",
+        "dayOffset": 0,
+        "intensity": 8,
+        "kind": "capture",
+        "reflectionId": null
+      },
+      {
+        "on": "2026-10-02",
+        "dayOffset": 4,
+        "intensity": 3,
+        "kind": "reflection",
+        "reflectionId": "e7c3a1b9-5d2f-4a60-9b8e-3f1d0c7a6e25"
+      }
+    ],
+    "webUrl": "https://nbd.dkz12345.com/moments/6f1c2a9e-3b7d-4c51-9a2e-0d8f4b6c1a72"
+  }
+}

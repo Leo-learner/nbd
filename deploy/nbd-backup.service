@@ -1,0 +1,18 @@
+[Unit]
+Description=NBD verified online backup
+After=nbd.service
+
+[Service]
+Type=oneshot
+User=nbd
+Group=nbd
+WorkingDirectory=/opt/apps/nbd/current
+EnvironmentFile=/etc/nbd.env
+ExecStart=/usr/bin/node --max-old-space-size=128 dist/scripts/admin.js backup
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/nbd
+MemoryMax=256M

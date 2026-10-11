@@ -1,0 +1,118 @@
+{
+  "summary": "洞察总览：23 件事，担心的事 83% 没发生",
+  "operationId": "getInsightsOverview",
+  "kind": "response",
+  "status": 200,
+  "schema": "InsightsOverview",
+  "value": {
+    "range": {
+      "from": null,
+      "to": null
+    },
+    "minSample": 5,
+    "totals": {
+      "moments": 23,
+      "reflected": 15,
+      "settled": 9,
+      "archived": 1
+    },
+    "fear": {
+      "withFear": 18,
+      "judged": 12,
+      "no": 10,
+      "partly": 2,
+      "yes": 0,
+      "unknown": 1,
+      "pending": 5,
+      "neverHappenedRate": 0.8333
+    },
+    "intensity": {
+      "pairs": 15,
+      "meanThen": 7.2,
+      "meanNow": 2.9,
+      "meanDrop": 4.3
+    },
+    "letGo": {
+      "count": 9,
+      "medianDays": 11
+    },
+    "distributions": {
+      "emotions": [
+        {
+          "key": "embarrassed",
+          "count": 14
+        },
+        {
+          "key": "anxious",
+          "count": 11
+        },
+        {
+          "key": "ashamed",
+          "count": 6
+        },
+        {
+          "key": "regretful",
+          "count": 5
+        },
+        {
+          "key": "afraid",
+          "count": 3
+        }
+      ],
+      "scenes": [
+        {
+          "key": "work",
+          "count": 10
+        },
+        {
+          "key": "social",
+          "count": 6
+        },
+        {
+          "key": "online",
+          "count": 3
+        },
+        {
+          "key": "family",
+          "count": 2
+        },
+        {
+          "key": "public",
+          "count": 2
+        }
+      ],
+      "thinkingTraps": [
+        {
+          "key": "spotlight",
+          "count": 9
+        },
+        {
+          "key": "catastrophizing",
+          "count": 8
+        },
+        {
+          "key": "mind_reading",
+          "count": 6
+        },
+        {
+          "key": "fortune_telling",
+          "count": 4
+        }
+      ],
+      "resolutions": [
+        {
+          "key": "let_go",
+          "count": 9
+        },
+        {
+          "key": "easing",
+          "count": 4
+        },
+        {
+          "key": "still_matters",
+          "count": 2
+        }
+      ]
+    }
+  }
+}

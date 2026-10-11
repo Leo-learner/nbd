@@ -1,0 +1,71 @@
+{
+  "summary": "Claude Code 用只写密钥记下一件刚发生的事",
+  "tool": "record_moment",
+  "request": {
+    "jsonrpc": "2.0",
+    "id": 7,
+    "method": "tools/call",
+    "params": {
+      "name": "record_moment",
+      "arguments": {
+        "clientRequestId": "3f0c6a2e-9b1d-4e7f-8a5c-2d4b6e8f0a13",
+        "title": "地铁上语音消息外放了",
+        "narrative": "早高峰挤地铁，我忘了没连耳机，点开语音直接外放：「你那个方案老板说要重做。」整节车厢好像都安静了一下，旁边的人看了我一眼。我赶紧按掉，一路低着头到站，感觉所有人都知道我被老板否了。",
+        "happenedAt": "2026-10-11T08:40:00+08:00",
+        "happenedAtPrecision": "exact",
+        "scene": "public",
+        "emotions": [
+          {
+            "key": "embarrassed",
+            "intensity": 7
+          },
+          {
+            "key": "ashamed",
+            "intensity": 5
+          }
+        ],
+        "intensity": 6,
+        "severity": 3,
+        "fearedOutcome": "车厢里的人都听到我被老板否定，觉得我很差劲。",
+        "bodySignals": "脸发烫，不敢抬头",
+        "people": [
+          "陌生乘客"
+        ],
+        "tags": [
+          "通勤"
+        ],
+        "agentSummary": "通勤时语音消息外放，内容是方案被要求重做，当场很尴尬。"
+      }
+    }
+  },
+  "response": {
+    "jsonrpc": "2.0",
+    "id": 7,
+    "result": {
+      "content": [
+        {
+          "type": "text",
+          "text": "{\"data\":{\"moment\":{\"id\":\"2d7e9b40-8c1f-4e6a-b3d5-71a0c9e2f418\",\"revision\":1,\"status\":\"fresh\",\"capturedAt\":\"2026-10-11T01:02:10.500Z\",\"happenedOn\":\"2026-10-11\",\"editableUntil\":\"2026-10-12T01:02:10.500Z\",\"nextReviewOn\":\"2026-10-14\",\"tags\":[\"通勤\"],\"webUrl\":\"https://nbd.dkz12345.com/moments/2d7e9b40-8c1f-4e6a-b3d5-71a0c9e2f418\"},\"replayed\":false}}"
+        }
+      ],
+      "structuredContent": {
+        "data": {
+          "moment": {
+            "id": "2d7e9b40-8c1f-4e6a-b3d5-71a0c9e2f418",
+            "revision": 1,
+            "status": "fresh",
+            "capturedAt": "2026-10-11T01:02:10.500Z",
+            "happenedOn": "2026-10-11",
+            "editableUntil": "2026-10-12T01:02:10.500Z",
+            "nextReviewOn": null,
+            "tags": [
+              "通勤"
+            ],
+            "webUrl": "https://nbd.dkz12345.com/moments/2d7e9b40-8c1f-4e6a-b3d5-71a0c9e2f418"
+          },
+          "replayed": false
+        }
+      }
+    }
+  }
+}

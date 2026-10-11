@@ -1,0 +1,129 @@
+{
+  "summary": "时间线第一页：刚记下、该回看、已回看各一件",
+  "operationId": "listMoments",
+  "kind": "response",
+  "status": 200,
+  "schema": "MomentPage",
+  "value": {
+    "items": [
+      {
+        "id": "2d7e9b40-8c1f-4e6a-b3d5-71a0c9e2f418",
+        "title": "地铁上语音消息外放了",
+        "happenedAt": "2026-10-11T00:40:00.000Z",
+        "happenedOn": "2026-10-11",
+        "happenedAtPrecision": "exact",
+        "capturedAt": "2026-10-11T01:02:10.500Z",
+        "scene": "public",
+        "emotions": [
+          {
+            "key": "embarrassed",
+            "intensity": 7
+          },
+          {
+            "key": "ashamed",
+            "intensity": 5
+          }
+        ],
+        "intensity": 6,
+        "severity": 3,
+        "latestIntensityNow": null,
+        "latestResolution": null,
+        "status": "fresh",
+        "nextReviewOn": null,
+        "tags": [
+          "通勤"
+        ],
+        "noteCount": 0,
+        "reflectionCount": 0,
+        "lessonCount": 0,
+        "hasFear": true,
+        "source": {
+          "kind": "agent_key",
+          "id": "f2d9b6c4-8e1a-4b53-a7c0-9d3e5f1b8a64",
+          "label": "Claude Code（MacBook）"
+        },
+        "excerpt": "早高峰挤地铁，我忘了没连耳机，点开语音直接外放：「你那个方案老板说要重做。」整节车厢好像都安静了一下，旁边的人看了我一眼。我赶紧按掉，一路低着头到站，感觉所有人都知道我被老板否了。"
+      },
+      {
+        "id": "9b4f0e21-6d3a-4f8c-8e17-c25a90d3b6e4",
+        "title": "给客户的周报附错了文件",
+        "happenedAt": "2026-10-08T04:00:00.000Z",
+        "happenedOn": "2026-10-08",
+        "happenedAtPrecision": "day",
+        "capturedAt": "2026-10-08T13:25:31.004Z",
+        "scene": "work",
+        "emotions": [
+          {
+            "key": "anxious",
+            "intensity": 7
+          },
+          {
+            "key": "regretful",
+            "intensity": null
+          }
+        ],
+        "intensity": 7,
+        "severity": 6,
+        "latestIntensityNow": null,
+        "latestResolution": null,
+        "status": "due",
+        "nextReviewOn": null,
+        "tags": [
+          "工作",
+          "邮件"
+        ],
+        "noteCount": 0,
+        "reflectionCount": 0,
+        "lessonCount": 0,
+        "hasFear": true,
+        "source": {
+          "kind": "oauth_app",
+          "id": "c8a4e2f6-0d7b-4c15-9e3a-5b8f1d6c2a07",
+          "label": "Claude"
+        },
+        "excerpt": "今天给客户发周报的时候附错了文件，把内部的排期表发出去了，里面还有我们自己写的吐槽备注。发出去半小时才发现，赶紧补发了正确的，但撤回不了。现在一直在想客户会不会看到那些备注，觉得我们不专业，影响下个月的续约。"
+      },
+      {
+        "id": "6f1c2a9e-3b7d-4c51-9a2e-0d8f4b6c1a72",
+        "title": "周会上把新领导的名字叫错了",
+        "happenedAt": "2026-09-28T02:30:00.000Z",
+        "happenedOn": "2026-09-28",
+        "happenedAtPrecision": "exact",
+        "capturedAt": "2026-09-28T04:12:45.120Z",
+        "scene": "work",
+        "emotions": [
+          {
+            "key": "embarrassed",
+            "intensity": 8
+          },
+          {
+            "key": "anxious",
+            "intensity": 6
+          }
+        ],
+        "intensity": 8,
+        "severity": 6,
+        "latestIntensityNow": 3,
+        "latestResolution": "easing",
+        "status": "reflected",
+        "nextReviewOn": null,
+        "tags": [
+          "工作",
+          "第一印象"
+        ],
+        "noteCount": 1,
+        "reflectionCount": 1,
+        "lessonCount": 1,
+        "hasFear": true,
+        "source": {
+          "kind": "oauth_app",
+          "id": "c8a4e2f6-0d7b-4c15-9e3a-5b8f1d6c2a07",
+          "label": "Claude"
+        },
+        "excerpt": "今天周会轮到我汇报，我开口就说「谢谢王总」，结果新来的领导姓汪，不姓王。会议室安静了两秒，有人笑了一下，我脸一下子就烧起来了，后面讲什么都有点结巴。散会以后我一直在想，他会不会觉得我根本不上心，连他名字都记不住。"
+      }
+    ],
+    "nextCursor": null,
+    "total": 3
+  }
+}

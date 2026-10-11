@@ -1,0 +1,56 @@
+{
+  "summary": "Claude 手机 App 带用户回看一周前聚会上的冷场",
+  "tool": "add_reflection",
+  "request": {
+    "jsonrpc": "2.0",
+    "id": 12,
+    "method": "tools/call",
+    "params": {
+      "name": "add_reflection",
+      "arguments": {
+        "clientRequestId": "8d2f4b6a-1c3e-4a5f-9b7d-0e2c4a6f8b19",
+        "momentId": "4a8d2c6e-1f5b-4b97-a0c3-e8f17d29b5a1",
+        "intensityNow": 2,
+        "resolution": "let_go",
+        "fearCameTrue": "no",
+        "whatHappened": "后来大家照样在群里聊天，还有人@我约下次一起吃饭，没人提那个笑话。",
+        "perspective": "冷场两秒钟，别人转头就忘了，是我自己在反复回放。",
+        "thinkingTraps": [
+          "spotlight"
+        ],
+        "lessonIds": [
+          "b3e1d7a5-4c9f-4a28-8f6b-1d0e7c3a9b56"
+        ]
+      }
+    }
+  },
+  "response": {
+    "jsonrpc": "2.0",
+    "id": 12,
+    "result": {
+      "content": [
+        {
+          "type": "text",
+          "text": "{\"data\":{\"reflection\":{\"id\":\"5e2b8d4f-9a1c-4f37-8d6e-0b7c3a5f1e92\",\"createdAt\":\"2026-09-24T12:41:09.330Z\"},\"comparison\":{\"intensityThen\":6,\"intensityNow\":2,\"change\":-4,\"daysSinceHappened\":4},\"status\":\"settled\",\"nextReviewOn\":null,\"replayed\":false}}"
+        }
+      ],
+      "structuredContent": {
+        "data": {
+          "reflection": {
+            "id": "5e2b8d4f-9a1c-4f37-8d6e-0b7c3a5f1e92",
+            "createdAt": "2026-09-24T12:41:09.330Z"
+          },
+          "comparison": {
+            "intensityThen": 6,
+            "intensityNow": 2,
+            "change": -4,
+            "daysSinceHappened": 4
+          },
+          "status": "settled",
+          "nextReviewOn": null,
+          "replayed": false
+        }
+      }
+    }
+  }
+}

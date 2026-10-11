@@ -1,0 +1,34 @@
+{
+  "summary": "错误示例：超过 24 小时后 Agent 想改原始记录，被拒绝并建议改用 add_note",
+  "tool": "correct_moment",
+  "request": {
+    "jsonrpc": "2.0",
+    "id": 31,
+    "method": "tools/call",
+    "params": {
+      "name": "correct_moment",
+      "arguments": {
+        "clientRequestId": "c1e5a9d3-7f2b-4c6e-b8a0-4d2f6e8a0c57",
+        "momentId": "6f1c2a9e-3b7d-4c51-9a2e-0d8f4b6c1a72",
+        "expectedRevision": 2,
+        "reason": "用户说当时其实没那么难受",
+        "changes": {
+          "intensity": 5
+        }
+      }
+    }
+  },
+  "response": {
+    "jsonrpc": "2.0",
+    "id": 31,
+    "result": {
+      "isError": true,
+      "content": [
+        {
+          "type": "text",
+          "text": "{\"error\":{\"code\":\"MOMENT_FROZEN\",\"message\":\"记录已超过 24 小时，原始记录不能再由 Agent 更正，请用 add_note 补充\",\"details\":{\"editableUntil\":\"2026-09-29T04:12:45.120Z\",\"suggestedTool\":\"add_note\"}},\"auditId\":1042}"
+        }
+      ]
+    }
+  }
+}

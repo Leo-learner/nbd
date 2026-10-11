@@ -1,0 +1,19 @@
+{
+  "summary": "在网页上给「附错文件」写复盘",
+  "operationId": "createReflection",
+  "kind": "request",
+  "schema": "ReflectionCreate",
+  "value": {
+    "intensityNow": 2,
+    "resolution": "let_go",
+    "severityNow": 1,
+    "fearCameTrue": "no",
+    "whatHappened": "客户第二天回复「收到，附件我在系统里找到了」，还顺手确认了下周的会议。",
+    "perspective": "发错附件是谁都会犯的小错，补发一封说明就结束了，客户根本没当回事。",
+    "thinkingTraps": [
+      "catastrophizing",
+      "fortune_telling"
+    ],
+    "lessonIds": []
+  }
+}

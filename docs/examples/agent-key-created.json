@@ -1,0 +1,24 @@
+{
+  "summary": "新建 Agent 密钥：secret 只在这次响应里出现（下面是假值）",
+  "operationId": "createAgentKey",
+  "kind": "response",
+  "status": 201,
+  "schema": "AgentKeyCreated",
+  "value": {
+    "agentKey": {
+      "id": "f2d9b6c4-8e1a-4b53-a7c0-9d3e5f1b8a64",
+      "label": "Claude Code（MacBook）",
+      "prefix": "nbd_ak_Q3vX",
+      "scopes": [
+        "read",
+        "write"
+      ],
+      "createdAt": "2026-10-10T15:20:00.000Z",
+      "expiresAt": "2027-10-10T15:20:00.000Z",
+      "lastUsedAt": null,
+      "revokedAt": null
+    },
+    "secret": "nbd_ak_0000000000000000000000000000000000000000000",
+    "mcpUrl": "https://nbd.dkz12345.com/mcp"
+  }
+}

@@ -1,0 +1,5480 @@
+# NBD 网页 API 契约草案（OpenAPI 3.0.3）：先于实现编写，P2 之后以服务端生成的 /openapi.json 为准
+openapi: 3.0.3
+info:
+  title: NBD（没什么大不了）网页 API
+  version: 1.0.0-draft
+  description: |-
+    给网页前端用的 REST 契约草案 v1，先于实现编写。后端完成 P2 阶段后，以服务端生成的 `/openapi.json` 为准，本文件退役。
+
+    - 业务前缀 `/api/v1`，JSON 字段 camelCase。
+    - 两种时间类型：**Instant**（`format: date-time`，UTC ISO 8601）和 **LocalDate**（`format: date`，`YYYY-MM-DD`，按所有者时区解释）。
+    - 鉴权用 HttpOnly 会话 Cookie；fetch 设置 `credentials: "include"`。
+    - 所有写请求必须带请求头 `X-NBD-Request: 1`。
+    - 错误统一为 `{"error":{"code","message","details?"},"requestId"}`，每个操作可能的错误码见扩展字段 `x-nbd-error-codes`。
+    - 新记录只由 Agent 通过 MCP 创建，网页没有新建事件的接口；MCP 契约见 `docs/MCP.md` 与 `docs/mcp-tools.json`。
+
+    完整说明见 `docs/API.md`。
+servers:
+  - url: https://nbd.dkz12345.com
+    description: 生产
+  - url: http://127.0.0.1:3230
+    description: 本地开发（COOKIE_SECURE=false，Cookie 名为 nbd_sid）
+tags:
+  - name: system
+    description: 系统：健康检查、元数据
+  - name: auth
+    description: 账号与会话
+  - name: moments
+    description: 事件（一件事）：时间线、详情、修改、补记、标签、归档、回收站
+  - name: reviews
+    description: 复盘：待回看收件箱、写复盘
+  - name: lessons
+    description: 经验库
+  - name: tags
+    description: 标签管理
+  - name: insights
+    description: 洞察统计
+  - name: access
+    description: 接入管理：Agent 密钥、已连接的应用
+  - name: data
+    description: 设置、导出、操作记录
+paths:
+  /healthz:
+    get:
+      operationId: getHealth
+      tags:
+        - system
+      summary: 存活检查
+      security: []
+      responses:
+        "200":
+          description: 进程存活
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Health"
+      x-nbd-error-codes: []
+  /readyz:
+    get:
+      operationId: getReady
+      tags:
+        - system
+      summary: 就绪检查（数据库可读、迁移版本一致）
+      security: []
+      responses:
+        "200":
+          description: 就绪
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Ready"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+      x-nbd-error-codes:
+        - NOT_READY
+  /api/v1/meta:
+    get:
+      operationId: getMeta
+      tags:
+        - system
+      summary: 版本、功能开关、限额、排程参数和全部枚举的中文标签
+      security: []
+      responses:
+        "200":
+          description: 成功
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/XRequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Meta"
+              example:
+                version: 1.0.0
+                apiVersion: v1
+                features:
+                  attachments: false
+                  reminders: false
+                  shareLinks: false
+                  totp: false
+                  registration: false
+                  dcr: false
+                limits:
+                  titleMax: 60
+                  narrativeMax: 20000
+                  agentSummaryMax: 500
+                  fearedOutcomeMax: 1000
+                  thoughtsMax: 2000
+                  bodySignalsMax: 500
+                  immediateResponseMax: 1000
+                  peopleMax: 10
+                  personMax: 20
+                  tagsMax: 10
+                  tagMax: 20
+                  emotionsMax: 5
+                  noteMax: 5000
+                  whatHappenedMax: 2000
+                  perspectiveMax: 5000
+                  trapsMax: 5
+                  lessonIdsMax: 10
+                  lessonTitleMax: 80
+                  lessonBodyMax: 5000
+                  reasonMax: 200
+                  qMax: 100
+                  pageMax: 100
+                  listCap: 500
+                  snoozeMaxDays: 90
+                  keyLabelMax: 40
+                  keyMaxDays: 365
+                  passwordMin: 12
+                  calendarMaxDays: 400
+                review:
+                  scheduleDays:
+                    - 3
+                    - 14
+                    - 60
+                  freezeHours: 24
+                  trashDays: 30
+                  snoozeMaxDays: 90
+                enums:
+                  scene:
+                    - key: work
+                      label: 工作
+                    - key: study
+                      label: 学习
+                    - key: social
+                      label: 社交
+                    - key: family
+                      label: 家庭
+                    - key: romance
+                      label: 感情
+                    - key: online
+                      label: 网络
+                    - key: public
+                      label: 公共场合
+                    - key: other
+                      label: 其他
+                  emotion:
+                    - key: embarrassed
+                      label: 尴尬
+                    - key: ashamed
+                      label: 丢脸
+                    - key: anxious
+                      label: 焦虑
+                    - key: afraid
+                      label: 害怕
+                    - key: guilty
+                      label: 内疚
+                    - key: regretful
+                      label: 后悔
+                    - key: angry
+                      label: 生气
+                    - key: aggrieved
+                      label: 委屈
+                    - key: sad
+                      label: 难过
+                    - key: helpless
+                      label: 无力
+                    - key: other
+                      label: 其他
+                  thinkingTrap:
+                    - key: spotlight
+                      label: 聚光灯效应
+                      hint: 以为所有人都在注意自己
+                    - key: catastrophizing
+                      label: 灾难化
+                      hint: 直接想到最坏的结果
+                    - key: mind_reading
+                      label: 读心术
+                      hint: 认定别人一定是这么看我的
+                    - key: fortune_telling
+                      label: 预言未来
+                      hint: 认定坏结果一定会发生
+                    - key: overgeneralizing
+                      label: 以偏概全
+                      hint: 一次出错就当成「我总是这样」
+                    - key: personalizing
+                      label: 个人化
+                      hint: 把不全是自己的责任都揽到身上
+                    - key: all_or_nothing
+                      label: 非黑即白
+                      hint: 不是完美就是彻底失败
+                    - key: should
+                      label: 应该思维
+                      hint: 「我本应该……」式的苛责
+                  resolution:
+                    - key: let_go
+                      label: 放下了
+                    - key: easing
+                      label: 好多了
+                    - key: still_matters
+                      label: 还在意
+                  fearCameTrue:
+                    - key: no
+                      label: 没发生
+                    - key: partly
+                      label: 部分发生
+                    - key: yes
+                      label: 发生了
+                    - key: unknown
+                      label: 还不知道
+                  status:
+                    - key: fresh
+                      label: 刚记下
+                    - key: cooling
+                      label: 冷却中
+                    - key: due
+                      label: 该回看
+                    - key: reflected
+                      label: 已回看
+                    - key: settled
+                      label: 已释怀
+                    - key: archived
+                      label: 已归档
+                  precision:
+                    - key: exact
+                      label: 精确时间
+                    - key: day
+                      label: 只知道日期
+                    - key: approx
+                      label: 大概
+                  scope:
+                    - key: read
+                      label: 读取历史
+                    - key: write
+                      label: 记录与补记
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "500":
+          $ref: "#/components/responses/InternalError"
+      x-nbd-error-codes: []
+  /api/v1/auth/login:
+    post:
+      operationId: login
+      tags:
+        - auth
+      summary: 登录
+      description: 成功后设置会话 Cookie 并轮换会话。用户名不存在和密码错误都返回 401 INVALID_CREDENTIALS。没有注册接口，所有者账号由服务器 CLI 创建。
+      security: []
+      parameters:
+        - $ref: "#/components/parameters/XNbdRequest"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoginRequest"
+      responses:
+        "200":
+          description: 成功
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/XRequestId"
+            Set-Cookie:
+              description: 生产环境为 __Host-nbd_sid=…; HttpOnly; Secure; SameSite=Lax; Path=/
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "500":
+          $ref: "#/components/responses/InternalError"
+      x-nbd-error-codes:
+        - VALIDATION_ERROR
+        - INVALID_CREDENTIALS
+        - AUTH_BUSY
+        - RATE_LIMITED
+        - REQUEST_HEADER_REQUIRED
+        - ORIGIN_REJECTED
+  /api/v1/auth/logout:
+    post:
+      operationId: logout
+      tags:
+        - auth
+      summary: 退出当前会话
+      description: 没有登录也返回成功。
+      security: []
+      parameters:
+        - $ref: "#/components/parameters/XNbdRequest"
+      responses:
+        "200":
+          description: 成功
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/XRequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Ok"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "500":
+          $ref: "#/components/responses/InternalError"
+      x-nbd-error-codes:
+        - REQUEST_HEADER_REQUIRED
+        - ORIGIN_REJECTED
+  /api/v1/auth/logout-all:
+    post:
+      operationId: logoutAll
+      tags:
+        - auth
+      summary: 退出所有会话
+      security:
+        - cookieAuth: []
+      parameters:
+        - $ref: "#/components/parameters/XNbdRequest"
+      responses:
+        "200":
+          description: 成功
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/XRequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Ok"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "500":
+          $ref: "#/components/responses/InternalError"
+      x-nbd-error-codes:
+        - AUTH_REQUIRED
+        - REQUEST_HEADER_REQUIRED
+        - ORIGIN_REJECTED
+  /api/v1/auth/me:
+    get:
+      operationId: getMe
+      tags:
+        - auth
+      summary: 当前用户
+      description: '未登录时返回 {"user": null}，不返回 401。'
+      security: []
+      responses:
+        "200":
+          description: 成功
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/XRequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MeResponse"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "500":
+          $ref: "#/components/responses/InternalError"
+      x-nbd-error-codes: []
+  /api/v1/auth/password:
+    put:
+      operationId: changePassword
+      tags:
+        - auth
+      summary: 修改密码
+      description: 校验当前密码后修改；其他会话全部失效，当前会话轮换。
+      security:
+        - cookieAuth: []
+      parameters:
+        - $ref: "#/components/parameters/XNbdRequest"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PasswordChange"
+      responses:
+        "200":
+          description: 成功
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/XRequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Ok"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "500":
+          $ref: "#/components/responses/InternalError"
+      x-nbd-error-codes:
+        - VALIDATION_ERROR
+        - AUTH_REQUIRED
+        - PASSWORD_INCORRECT
+        - AUTH_BUSY
+  /api/v1/moments:
+    get:
+      operationId: listMoments
+      tags:
+        - moments
+      summary: 事件列表（时间线、搜索、洞察下钻）
+      description: 不含回收站里的事件。游标分页；total 是符合筛选条件的总数。
+      security:
+        - cookieAuth: []
+      parameters:
+        - name: status
+          in: query
+          required: false
+          description: 按状态过滤
+          schema:
+            $ref: "#/components/schemas/MomentStatus"
+        - name: scene
+          in: query
+          required: false
+          description: 按场景过滤
+          schema:
+            $ref: "#/components/schemas/Scene"
+        - name: emotion
+          in: query
+          required: false
+          description: 包含这种情绪
+          schema:
+            $ref: "#/components/schemas/Emotion"
+        - name: tag
+          in: query
+          required: false
+          description: 带这个标签（按名称）
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 20
+        - name: trap
+          in: query
+          required: false
+          description: 任一次复盘里标了这个思维陷阱
+          schema:
+            $ref: "#/components/schemas/ThinkingTrap"
+        - name: resolution
+          in: query
+          required: false
+          description: 最近一次复盘的结论
+          schema:
+            $ref: "#/components/schemas/Resolution"
+        - name: fearCameTrue
+          in: query
+          required: false
+          description: 最近一次不是 unknown 的回答；传 unknown 表示还没有确定答案
+          schema:
+            $ref: "#/components/schemas/FearCameTrue"
+        - $ref: "#/components/parameters/From"
+        - $ref: "#/components/parameters/To"
+        - name: q
+          in: query
+          required: false
+          description: 关键词，按字面匹配标题、原话、补记和复盘；多个词用空格分开表示同时包含
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 100
+        - name: sort
+          in: query
+          required: false
+          description: 排序
+          schema:
+            allOf:
+              - $ref: "#/components/schemas/MomentSort"
+            default: happened_desc
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: 成功
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/XRequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MomentPage"
+              example:
+                items:
+                  - id: 2d7e9b40-8c1f-4e6a-b3d5-71a0c9e2f418
+                    title: 地铁上语音消息外放了
+                    happenedAt: 2026-10-11T00:40:00.000Z
+                    happenedOn: 2026-10-11
+                    happenedAtPrecision: exact
+                    capturedAt: 2026-10-11T01:02:10.500Z
+                    scene: public
+                    emotions:
+                      - key: embarrassed
+                        intensity: 7
+                      - key: ashamed
+                        intensity: 5
+                    intensity: 6
+                    severity: 3
+                    latestIntensityNow: null
+                    latestResolution: null
+                    status: fresh
+                    nextReviewOn: 2026-10-14
+                    tags:
+                      - 通勤
+                    noteCount: 0
+                    reflectionCount: 0
+                    lessonCount: 0
+                    hasFear: true
+                    source:
+                      kind: agent_key
+                      id: f2d9b6c4-8e1a-4b53-a7c0-9d3e5f1b8a64
+                      label: Claude Code（MacBook）
+                    excerpt: 早高峰挤地铁，我忘了没连耳机，点开语音直接外放：「你那个方案老板说要重做。」整节车厢好像都安静了一下，旁边的人看了我一眼。我赶紧按掉，一路低着头到站，感觉所有人都知道我被老板否了。
+                  - id: 9b4f0e21-6d3a-4f8c-8e17-c25a90d3b6e4
+                    title: 给客户的周报附错了文件
+                    happenedAt: 2026-10-08T04:00:00.000Z
+                    happenedOn: 2026-10-08
+                    happenedAtPrecision: day
+                    capturedAt: 2026-10-08T13:25:31.004Z
+                    scene: work
+                    emotions:
+                      - key: anxious
+                        intensity: 7
+                      - key: regretful
+                        intensity: null
+                    intensity: 7
+                    severity: 6
+                    latestIntensityNow: null
+                    latestResolution: null
+                    status: due
+                    nextReviewOn: 2026-10-11
+                    tags:
+                      - 工作
+                      - 邮件
+                    noteCount: 0
+                    reflectionCount: 0
+                    lessonCount: 0
+                    hasFear: true
+                    source:
+                      kind: oauth_app
+                      id: c8a4e2f6-0d7b-4c15-9e3a-5b8f1d6c2a07
+                      label: Claude
+                    excerpt: 今天给客户发周报的时候附错了文件，把内部的排期表发出去了，里面还有我们自己写的吐槽备注。发出去半小时才发现，赶紧补发了正确的，但撤回不了。现在一直在想客户会不会看到那些备注，觉得我们不专业，影响下个月的续约。
+                  - id: 6f1c2a9e-3b7d-4c51-9a2e-0d8f4b6c1a72
+                    title: 周会上把新领导的名字叫错了
+                    happenedAt: 2026-09-28T02:30:00.000Z
+                    happenedOn: 2026-09-28
+                    happenedAtPrecision: exact
+                    capturedAt: 2026-09-28T04:12:45.120Z
+                    scene: work
+                    emotions:
+                      - key: embarrassed
+                        intensity: 8
+                      - key: anxious
+                        intensity: 6
+                    intensity: 8
+                    severity: 6
+                    latestIntensityNow: 3
+                    latestResolution: easing
+                    status: reflected
+                    nextReviewOn: 2026-10-12
+                    tags:
+                      - 工作
+                      - 第一印象
+                    noteCount: 1
+                    reflectionCount: 1
+                    lessonCount: 1
+                    hasFear: true
+                    source:
+                      kind: oauth_app
+                      id: c8a4e2f6-0d7b-4c15-9e3a-5b8f1d6c2a07
+                      label: Claude
+                    excerpt: 今天周会轮到我汇报，我开口就说「谢谢王总」，结果新来的领导姓汪，不姓王。会议室安静了两秒，有人笑了一下，我脸一下子就烧起来了，后面讲什么都有点结巴。散会以后我一直在想，他会不会觉得我根本不上心，连他名字都记不住。
+                nextCursor: null
+                total: 3
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "500":
+          $ref: "#/components/responses/InternalError"
+      x-nbd-error-codes:
+        - VALIDATION_ERROR
+        - AUTH_REQUIRED
+  /api/v1/moments/{momentId}:
+    get:
+      operationId: getMoment
+      tags:
+        - moments
+      summary: 事件详情
+      description: 回收站里的事件也能取到，此时 deletedAt、purgeAt 有值。
+      security:
+        - cookieAuth: []
+      parameters:
+        - $ref: "#/components/parameters/MomentId"
+      responses:
+        "200":
+          description: 成功
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/XRequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MomentDetail"
+              example:
+                id: 6f1c2a9e-3b7d-4c51-9a2e-0d8f4b6c1a72
+                title: 周会上把新领导的名字叫错了
+                happenedAt: 2026-09-28T02:30:00.000Z
+                happenedOn: 2026-09-28
+                happenedAtPrecision: exact
+                capturedAt: 2026-09-28T04:12:45.120Z
+                scene: work
+                emotions:
+                  - key: embarrassed
+                    intensity: 8
+                  - key: anxious
+                    intensity: 6
+                intensity: 8
+                severity: 6
+                latestIntensityNow: 3
+                latestResolution: easing
+                status: reflected
+                nextReviewOn: 2026-10-12
+                tags:
+                  - 工作
+                  - 第一印象
+                noteCount: 1
+                reflectionCount: 1
+                lessonCount: 1
+                hasFear: true
+                source:
+                  kind: oauth_app
+                  id: c8a4e2f6-0d7b-4c15-9e3a-5b8f1d6c2a07
+                  label: Claude
+                narrative: 今天周会轮到我汇报，我开口就说「谢谢王总」，结果新来的领导姓汪，不姓王。会议室安静了两秒，有人笑了一下，我脸一下子就烧起来了，后面讲什么都有点结巴。散会以后我一直在想，他会不会觉得我根本不上心，连他名字都记不住。
+                agentSummary: 周会汇报时把新领导的姓叫错（汪→王），当场很尴尬，担心对方觉得自己不用心。
+                fearedOutcome: 新领导觉得我做事不上心，以后对我有成见。
+                outcomeKnownBy: null
+                thoughts: 完了，第一印象全毁了。
+                bodySignals: 脸发烫，心跳很快
+                immediateResponse: 硬着头皮讲完，散会后没敢去解释。
+                people:
+                  - 新领导
+                  - 同事
+                revision: 2
+                revisionCount: 1
+                editableUntil: 2026-09-29T04:12:45.120Z
+                lastEditedAt: 2026-09-28T04:20:03.004Z
+                lastEditedBy:
+                  kind: oauth_app
+                  id: c8a4e2f6-0d7b-4c15-9e3a-5b8f1d6c2a07
+                  label: Claude
+                snoozedUntil: null
+                reviewStep:
+                  done: 1
+                  total: 3
+                archivedAt: null
+                deletedAt: null
+                purgeAt: null
+                notes:
+                  - id: a3f6c8e1-2b4d-4d79-b5a0-6e1c9f8d2b47
+                    momentId: 6f1c2a9e-3b7d-4c51-9a2e-0d8f4b6c1a72
+                    body: 下午汪总在群里回了我的周报，说「思路清楚，按这个推进」，好像完全没在意上午的事。
+                    author:
+                      kind: oauth_app
+                      id: c8a4e2f6-0d7b-4c15-9e3a-5b8f1d6c2a07
+                      label: Claude
+                    createdAt: 2026-09-28T09:40:00.000Z
+                reflections:
+                  - id: e7c3a1b9-5d2f-4a60-9b8e-3f1d0c7a6e25
+                    momentId: 6f1c2a9e-3b7d-4c51-9a2e-0d8f4b6c1a72
+                    intensityNow: 3
+                    severityNow: 2
+                    fearCameTrue: no
+                    whatHappened: 第二天汪总照常找我对接项目，还问我周末去哪玩了，完全没提这件事。
+                    perspective: 叫错一个字的姓，在别人那里可能就是两秒钟的事，只有我自己在反复回放。
+                    thinkingTraps:
+                      - spotlight
+                      - catastrophizing
+                    resolution: easing
+                    reflectedOn: 2026-10-02
+                    daysSinceHappened: 4
+                    lessonIds:
+                      - b3e1d7a5-4c9f-4a28-8f6b-1d0e7c3a9b56
+                    author:
+                      kind: owner
+                      id: null
+                      label: 我
+                    createdAt: 2026-10-02T13:05:00.000Z
+                    updatedAt: 2026-10-02T13:05:00.000Z
+                lessons:
+                  - id: b3e1d7a5-4c9f-4a28-8f6b-1d0e7c3a9b56
+                    title: 别人记得的远比我以为的少
+                intensitySeries:
+                  - on: 2026-09-28
+                    dayOffset: 0
+                    intensity: 8
+                    kind: capture
+                    reflectionId: null
+                  - on: 2026-10-02
+                    dayOffset: 4
+                    intensity: 3
+                    kind: reflection
+                    reflectionId: e7c3a1b9-5d2f-4a60-9b8e-3f1d0c7a6e25
+                webUrl: https://nbd.dkz12345.com/moments/6f1c2a9e-3b7d-4c51-9a2e-0d8f4b6c1a72
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "500":
+          $ref: "#/components/responses/InternalError"
+      x-nbd-error-codes:
+        - MOMENT_NOT_FOUND
+    patch:
+      operationId: updateMoment
+      tags:
+        - moments
+      summary: 修改原始记录（会生成修订记录）
+      description: 所有者随时可改，但必须带 expectedRevision。冻结期（editableUntil）之后改动，前端应先提示「这会改变当时的记录，旧版本会保留在修订历史里」。
+      security:
+        - cookieAuth: []
+      parameters:
+        - $ref: "#/components/parameters/MomentId"
+        - $ref: "#/components/parameters/XNbdRequest"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MomentPatch"
+      responses:
+        "200":
+          description: 成功
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/XRequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MomentDetail"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "500":
+          $ref: "#/components/responses/InternalError"
+      x-nbd-error-codes:
+        - VALIDATION_ERROR
+        - EMPTY_PATCH
+        - HAPPENED_AT_IN_FUTURE
+        - MOMENT_NOT_FOUND
+        - MOMENT_CONFLICT
+        - MOMENT_IN_TRASH
+    delete:
+      operationId: trashMoment
+      tags:
+        - moments
+      summary: 移进回收站
+      description: 30 天后自动彻底删除；期间可以恢复。关联的经验保留。
+      security:
+        - cookieAuth: []
+      parameters:
+        - $ref: "#/components/parameters/MomentId"
+        - $ref: "#/components/parameters/XNbdRequest"
+      responses:
+        "200":
+          description: 成功
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/XRequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TrashResult"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "500":
+          $ref: "#/components/responses/InternalError"
+      x-nbd-error-codes:
+        - MOMENT_NOT_FOUND
+  /api/v1/moments/{momentId}/revisions:
+    get:
+      operationId: listMomentRevisions
+      tags:
+        - moments
+      summary: 修订历史
+      security:
+        - cookieAuth: []
+      parameters:
+        - $ref: "#/components/parameters/MomentId"
+      responses:
+        "200":
+          description: 成功
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/XRequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RevisionList"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "500":
+          $ref: "#/components/responses/InternalError"
+      x-nbd-error-codes:
+        - MOMENT_NOT_FOUND
+  /api/v1/moments/{momentId}/tags:
+    put:
+      operationId: setMomentTags
+      tags:
+        - moments
+      summary: 整组替换标签
+      description: 不存在的标签会自动创建；不产生修订记录。
+      security:
+        - cookieAuth: []
+      parameters:
+        - $ref: "#/components/parameters/MomentId"
+        - $ref: "#/components/parameters/XNbdRequest"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MomentTagsPut"
+      responses:
+        "200":
+          description: 成功
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/XRequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MomentTags"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "500":
+          $ref: "#/components/responses/InternalError"
+      x-nbd-error-codes:
+        - VALIDATION_ERROR
+        - MOMENT_NOT_FOUND
+        - MOMENT_IN_TRASH
+  /api/v1/moments/{momentId}/notes:
+    post:
+      operationId: createNote
+      tags:
+        - moments
+      summary: 补记
+      security:
+        - cookieAuth: []
+      parameters:
+        - $ref: "#/components/parameters/MomentId"
+        - $ref: "#/components/parameters/XNbdRequest"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/NoteCreate"
+      responses:
+        "201":
+          description: 已创建
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/XRequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Note"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "500":
+          $ref: "#/components/responses/InternalError"
+      x-nbd-error-codes:
+        - VALIDATION_ERROR
+        - MOMENT_NOT_FOUND
+        - MOMENT_IN_TRASH
+        - IDEMPOTENCY_CONFLICT
+  /api/v1/notes/{noteId}:
+    delete:
+      operationId: deleteNote
+      tags:
+        - moments
+      summary: 删除补记（直接删除，进审计）
+      security:
+        - cookieAuth: []
+      parameters:
+        - $ref: "#/components/parameters/NoteId"
+        - $ref: "#/components/parameters/XNbdRequest"
+      responses:
+        "204":
+          description: 已删除
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/XRequestId"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "500":
+          $ref: "#/components/responses/InternalError"
+      x-nbd-error-codes:
+        - NOTE_NOT_FOUND
+  /api/v1/moments/{momentId}/snooze:
+    post:
+      operationId: snoozeMoment
+      tags:
+        - moments
+      summary: 推迟回看
+      description: 不占用排程步数，下一次复盘时自动清掉。已释怀或已归档的事件返回 409 NOT_SCHEDULED。
+      security:
+        - cookieAuth: []
+      parameters:
+        - $ref: "#/components/parameters/MomentId"
+        - $ref: "#/components/parameters/XNbdRequest"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SnoozeRequest"
+      responses:
+        "200":
+          description: 成功
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/XRequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ScheduleState"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "500":
+          $ref: "#/components/responses/InternalError"
+      x-nbd-error-codes:
+        - VALIDATION_ERROR
+        - MOMENT_NOT_FOUND
+        - MOMENT_IN_TRASH
+        - NOT_SCHEDULED
+  /api/v1/moments/{momentId}/archive:
+    post:
+      operationId: archiveMoment
+      tags:
+        - moments
+      summary: 归档（暂停提醒）
+      description: 幂等：已归档再调用也返回当前状态。
+      security:
+        - cookieAuth: []
+      parameters:
+        - $ref: "#/components/parameters/MomentId"
+        - $ref: "#/components/parameters/XNbdRequest"
+      responses:
+        "200":
+          description: 成功
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/XRequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ArchiveState"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "500":
+          $ref: "#/components/responses/InternalError"
+      x-nbd-error-codes:
+        - MOMENT_NOT_FOUND
+        - MOMENT_IN_TRASH
+  /api/v1/moments/{momentId}/unarchive:
+    post:
+      operationId: unarchiveMoment
+      tags:
+        - moments
+      summary: 取消归档
+      description: 幂等。原来的回看日期已经过去时，状态直接变成 due。
+      security:
+        - cookieAuth: []
+      parameters:
+        - $ref: "#/components/parameters/MomentId"
+        - $ref: "#/components/parameters/XNbdRequest"
+      responses:
+        "200":
+          description: 成功
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/XRequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ArchiveState"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "500":
+          $ref: "#/components/responses/InternalError"
+      x-nbd-error-codes:
+        - MOMENT_NOT_FOUND
+        - MOMENT_IN_TRASH
+  /api/v1/moments/{momentId}/restore:
+    post:
+      operationId: restoreMoment
+      tags:
+        - moments
+      summary: 从回收站恢复
+      security:
+        - cookieAuth: []
+      parameters:
+        - $ref: "#/components/parameters/MomentId"
+        - $ref: "#/components/parameters/XNbdRequest"
+      responses:
+        "200":
+          description: 成功
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/XRequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MomentSummary"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "500":
+          $ref: "#/components/responses/InternalError"
+      x-nbd-error-codes:
+        - MOMENT_NOT_FOUND
+        - MOMENT_NOT_IN_TRASH
+  /api/v1/trash:
+    get:
+      operationId: listTrash
+      tags:
+        - moments
+      summary: 回收站
+      security:
+        - cookieAuth: []
+      responses:
+        "200":
+          description: 成功
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/XRequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TrashList"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "500":
+          $ref: "#/components/responses/InternalError"
+      x-nbd-error-codes:
+        - AUTH_REQUIRED
+  /api/v1/trash/{momentId}:
+    delete:
+      operationId: purgeMoment
+      tags:
+        - moments
+      summary: 立即彻底删除
+      description: 连带删除补记、复盘、修订记录、关联和检索索引；不可恢复（服务器备份里最多还会留 14 天）。
+      security:
+        - cookieAuth: []
+      parameters:
+        - $ref: "#/components/parameters/MomentId"
+        - $ref: "#/components/parameters/XNbdRequest"
+      responses:
+        "204":
+          description: 已彻底删除
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/XRequestId"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "500":
+          $ref: "#/components/responses/InternalError"
+      x-nbd-error-codes:
+        - MOMENT_NOT_FOUND
+        - MOMENT_NOT_IN_TRASH
+  /api/v1/reviews/due:
+    get:
+      operationId: listDueReviews
+      tags:
+        - reviews
+      summary: 待回看收件箱
+      security:
+        - cookieAuth: []
+      parameters:
+        - name: upcomingDays
+          in: query
+          required: false
+          description: 同时返回未来几天内将到期的，0 表示不要
+          schema:
+            type: integer
+            minimum: 0
+            maximum: 30
+            default: 7
+      responses:
+        "200":
+          description: 成功
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/XRequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DueList"
+              example:
+                items:
+                  - moment:
+                      id: 9b4f0e21-6d3a-4f8c-8e17-c25a90d3b6e4
+                      title: 给客户的周报附错了文件
+                      excerpt: 今天给客户发周报的时候附错了文件，把内部的排期表发出去了，里面还有我们自己写的吐槽备注。发出去半小时才发现，赶紧补发了正确的，但撤回不了。现在一直在想客户会不会看到那些备注，觉得我们不专业，影响下个月的续约。
+                      happenedOn: 2026-10-08
+                      happenedAtPrecision: day
+                      scene: work
+                      emotions:
+                        - key: anxious
+                          intensity: 7
+                        - key: regretful
+                          intensity: null
+                      intensity: 7
+                      severity: 6
+                      fearedOutcome: 客户觉得我们不专业，影响下个月的续约。
+                    dueOn: 2026-10-11
+                    overdueDays: 0
+                    step:
+                      index: 1
+                      total: 3
+                    lastReflection: null
+                dueCount: 1
+                upcoming:
+                  - moment:
+                      id: 6f1c2a9e-3b7d-4c51-9a2e-0d8f4b6c1a72
+                      title: 周会上把新领导的名字叫错了
+                      excerpt: 今天周会轮到我汇报，我开口就说「谢谢王总」，结果新来的领导姓汪，不姓王。会议室安静了两秒，有人笑了一下，我脸一下子就烧起来了，后面讲什么都有点结巴。散会以后我一直在想，他会不会觉得我根本不上心，连他名字都记不住。
+                      happenedOn: 2026-09-28
+                      happenedAtPrecision: exact
+                      scene: work
+                      emotions:
+                        - key: embarrassed
+                          intensity: 8
+                        - key: anxious
+                          intensity: 6
+                      intensity: 8
+                      severity: 6
+                      fearedOutcome: 新领导觉得我做事不上心，以后对我有成见。
+                    dueOn: 2026-10-12
+                    overdueDays: 0
+                    step:
+                      index: 2
+                      total: 3
+                    lastReflection:
+                      createdAt: 2026-10-02T13:05:00.000Z
+                      intensityNow: 3
+                      resolution: easing
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "500":
+          $ref: "#/components/responses/InternalError"
+      x-nbd-error-codes:
+        - AUTH_REQUIRED
+  /api/v1/moments/{momentId}/reflections:
+    post:
+      operationId: createReflection
+      tags:
+        - reviews
+      summary: 写一次复盘
+      description: 已释怀的事件也可以再写。最近一次复盘决定状态和下次回看日期。
+      security:
+        - cookieAuth: []
+      parameters:
+        - $ref: "#/components/parameters/MomentId"
+        - $ref: "#/components/parameters/XNbdRequest"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ReflectionCreate"
+            example:
+              intensityNow: 2
+              resolution: let_go
+              severityNow: 1
+              fearCameTrue: no
+              whatHappened: 客户第二天回复「收到，附件我在系统里找到了」，还顺手确认了下周的会议。
+              perspective: 发错附件是谁都会犯的小错，补发一封说明就结束了，客户根本没当回事。
+              thinkingTraps:
+                - catastrophizing
+                - fortune_telling
+              lessonIds: []
+      responses:
+        "201":
+          description: 已创建
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/XRequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReflectionResult"
+              example:
+                reflection:
+                  id: 1c9e5f3a-7b2d-4e81-a6f0-d4b8c2e9a713
+                  momentId: 9b4f0e21-6d3a-4f8c-8e17-c25a90d3b6e4
+                  intensityNow: 2
+                  resolution: let_go
+                  severityNow: 1
+                  fearCameTrue: no
+                  whatHappened: 客户第二天回复「收到，附件我在系统里找到了」，还顺手确认了下周的会议。
+                  perspective: 发错附件是谁都会犯的小错，补发一封说明就结束了，客户根本没当回事。
+                  thinkingTraps:
+                    - catastrophizing
+                    - fortune_telling
+                  lessonIds: []
+                  reflectedOn: 2026-10-11
+                  daysSinceHappened: 3
+                  author:
+                    kind: owner
+                    id: null
+                    label: 我
+                  createdAt: 2026-10-11T12:30:05.210Z
+                  updatedAt: 2026-10-11T12:30:05.210Z
+                moment:
+                  id: 9b4f0e21-6d3a-4f8c-8e17-c25a90d3b6e4
+                  status: settled
+                  nextReviewOn: null
+                comparison:
+                  intensityThen: 7
+                  intensityNow: 2
+                  change: -5
+                  daysSinceHappened: 3
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "500":
+          $ref: "#/components/responses/InternalError"
+      x-nbd-error-codes:
+        - VALIDATION_ERROR
+        - MOMENT_NOT_FOUND
+        - MOMENT_IN_TRASH
+        - LESSON_NOT_FOUND
+        - IDEMPOTENCY_CONFLICT
+  /api/v1/reflections/{reflectionId}:
+    patch:
+      operationId: updateReflection
+      tags:
+        - reviews
+      summary: 修改复盘
+      description: 改动会重新计算事件的状态和下次回看日期。
+      security:
+        - cookieAuth: []
+      parameters:
+        - $ref: "#/components/parameters/ReflectionId"
+        - $ref: "#/components/parameters/XNbdRequest"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ReflectionPatch"
+      responses:
+        "200":
+          description: 成功
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/XRequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReflectionResult"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "500":
+          $ref: "#/components/responses/InternalError"
+      x-nbd-error-codes:
+        - VALIDATION_ERROR
+        - REFLECTION_NOT_FOUND
+        - LESSON_NOT_FOUND
+    delete:
+      operationId: deleteReflection
+      tags:
+        - reviews
+      summary: 删除复盘（直接删除，进审计）
+      security:
+        - cookieAuth: []
+      parameters:
+        - $ref: "#/components/parameters/ReflectionId"
+        - $ref: "#/components/parameters/XNbdRequest"
+      responses:
+        "200":
+          description: 成功
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/XRequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ScheduleState"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "500":
+          $ref: "#/components/responses/InternalError"
+      x-nbd-error-codes:
+        - REFLECTION_NOT_FOUND
+  /api/v1/lessons:
+    get:
+      operationId: listLessons
+      tags:
+        - lessons
+      summary: 经验库
+      security:
+        - cookieAuth: []
+      parameters:
+        - name: q
+          in: query
+          required: false
+          description: 按标题和正文过滤
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 100
+      responses:
+        "200":
+          description: 成功
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/XRequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LessonList"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "500":
+          $ref: "#/components/responses/InternalError"
+      x-nbd-error-codes:
+        - AUTH_REQUIRED
+    post:
+      operationId: createLesson
+      tags:
+        - lessons
+      summary: 新建经验
+      security:
+        - cookieAuth: []
+      parameters:
+        - $ref: "#/components/parameters/XNbdRequest"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LessonCreate"
+      responses:
+        "201":
+          description: 已创建
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/XRequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LessonDetail"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "500":
+          $ref: "#/components/responses/InternalError"
+      x-nbd-error-codes:
+        - VALIDATION_ERROR
+        - MOMENT_NOT_FOUND
+        - IDEMPOTENCY_CONFLICT
+  /api/v1/lessons/{lessonId}:
+    get:
+      operationId: getLesson
+      tags:
+        - lessons
+      summary: 经验详情（含关联的事件）
+      security:
+        - cookieAuth: []
+      parameters:
+        - $ref: "#/components/parameters/LessonId"
+      responses:
+        "200":
+          description: 成功
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/XRequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LessonDetail"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "500":
+          $ref: "#/components/responses/InternalError"
+      x-nbd-error-codes:
+        - LESSON_NOT_FOUND
+    patch:
+      operationId: updateLesson
+      tags:
+        - lessons
+      summary: 修改经验
+      security:
+        - cookieAuth: []
+      parameters:
+        - $ref: "#/components/parameters/LessonId"
+        - $ref: "#/components/parameters/XNbdRequest"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LessonPatch"
+      responses:
+        "200":
+          description: 成功
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/XRequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Lesson"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "500":
+          $ref: "#/components/responses/InternalError"
+      x-nbd-error-codes:
+        - VALIDATION_ERROR
+        - LESSON_NOT_FOUND
+    delete:
+      operationId: deleteLesson
+      tags:
+        - lessons
+      summary: 删除经验（直接删除，进审计）
+      security:
+        - cookieAuth: []
+      parameters:
+        - $ref: "#/components/parameters/LessonId"
+        - $ref: "#/components/parameters/XNbdRequest"
+      responses:
+        "204":
+          description: 已删除
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/XRequestId"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "500":
+          $ref: "#/components/responses/InternalError"
+      x-nbd-error-codes:
+        - LESSON_NOT_FOUND
+  /api/v1/lessons/{lessonId}/moments:
+    put:
+      operationId: setLessonMoments
+      tags:
+        - lessons
+      summary: 整组替换关联的事件
+      security:
+        - cookieAuth: []
+      parameters:
+        - $ref: "#/components/parameters/LessonId"
+        - $ref: "#/components/parameters/XNbdRequest"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LessonMomentsPut"
+      responses:
+        "200":
+          description: 成功
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/XRequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LessonDetail"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "500":
+          $ref: "#/components/responses/InternalError"
+      x-nbd-error-codes:
+        - VALIDATION_ERROR
+        - LESSON_NOT_FOUND
+        - MOMENT_NOT_FOUND
+  /api/v1/tags:
+    get:
+      operationId: listTags
+      tags:
+        - tags
+      summary: 全部标签及使用次数
+      security:
+        - cookieAuth: []
+      responses:
+        "200":
+          description: 成功
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/XRequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TagList"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "500":
+          $ref: "#/components/responses/InternalError"
+      x-nbd-error-codes:
+        - AUTH_REQUIRED
+  /api/v1/tags/{tagId}:
+    patch:
+      operationId: renameTag
+      tags:
+        - tags
+      summary: 重命名标签
+      description: 新名字已存在时返回 409 TAG_EXISTS（details.existingTagId），需要合并请调用 mergeTag。
+      security:
+        - cookieAuth: []
+      parameters:
+        - $ref: "#/components/parameters/TagId"
+        - $ref: "#/components/parameters/XNbdRequest"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TagRename"
+      responses:
+        "200":
+          description: 成功
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/XRequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Tag"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "500":
+          $ref: "#/components/responses/InternalError"
+      x-nbd-error-codes:
+        - VALIDATION_ERROR
+        - TAG_NOT_FOUND
+        - TAG_EXISTS
+    delete:
+      operationId: deleteTag
+      tags:
+        - tags
+      summary: 删除标签（从所有事件上摘掉）
+      security:
+        - cookieAuth: []
+      parameters:
+        - $ref: "#/components/parameters/TagId"
+        - $ref: "#/components/parameters/XNbdRequest"
+      responses:
+        "204":
+          description: 已删除
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/XRequestId"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "500":
+          $ref: "#/components/responses/InternalError"
+      x-nbd-error-codes:
+        - TAG_NOT_FOUND
+  /api/v1/tags/{tagId}/merge:
+    post:
+      operationId: mergeTag
+      tags:
+        - tags
+      summary: 把这个标签合并进另一个
+      security:
+        - cookieAuth: []
+      parameters:
+        - $ref: "#/components/parameters/TagId"
+        - $ref: "#/components/parameters/XNbdRequest"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TagMerge"
+      responses:
+        "200":
+          description: 成功
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/XRequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TagMergeResult"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "500":
+          $ref: "#/components/responses/InternalError"
+      x-nbd-error-codes:
+        - VALIDATION_ERROR
+        - TAG_NOT_FOUND
+        - TAG_MERGE_SELF
+  /api/v1/insights/overview:
+    get:
+      operationId: getInsightsOverview
+      tags:
+        - insights
+      summary: 总览：担心没成真的比例、强度变化、多久放下、各维度分布
+      security:
+        - cookieAuth: []
+      parameters:
+        - $ref: "#/components/parameters/From"
+        - $ref: "#/components/parameters/To"
+      responses:
+        "200":
+          description: 成功
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/XRequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InsightsOverview"
+              example:
+                range:
+                  from: null
+                  to: null
+                minSample: 5
+                totals:
+                  moments: 23
+                  reflected: 15
+                  settled: 9
+                  archived: 1
+                fear:
+                  withFear: 18
+                  judged: 12
+                  no: 10
+                  partly: 2
+                  yes: 0
+                  unknown: 1
+                  pending: 5
+                  neverHappenedRate: 0.8333
+                intensity:
+                  pairs: 15
+                  meanThen: 7.2
+                  meanNow: 2.9
+                  meanDrop: 4.3
+                letGo:
+                  count: 9
+                  medianDays: 11
+                distributions:
+                  emotions:
+                    - key: embarrassed
+                      count: 14
+                    - key: anxious
+                      count: 11
+                    - key: ashamed
+                      count: 6
+                    - key: regretful
+                      count: 5
+                    - key: afraid
+                      count: 3
+                  scenes:
+                    - key: work
+                      count: 10
+                    - key: social
+                      count: 6
+                    - key: online
+                      count: 3
+                    - key: family
+                      count: 2
+                    - key: public
+                      count: 2
+                  thinkingTraps:
+                    - key: spotlight
+                      count: 9
+                    - key: catastrophizing
+                      count: 8
+                    - key: mind_reading
+                      count: 6
+                    - key: fortune_telling
+                      count: 4
+                  resolutions:
+                    - key: let_go
+                      count: 9
+                    - key: easing
+                      count: 4
+                    - key: still_matters
+                      count: 2
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "500":
+          $ref: "#/components/responses/InternalError"
+      x-nbd-error-codes:
+        - VALIDATION_ERROR
+        - AUTH_REQUIRED
+  /api/v1/insights/decay:
+    get:
+      operationId: getInsightsDecay
+      tags:
+        - insights
+      summary: 情绪衰减：按天数分桶的强度和散点
+      security:
+        - cookieAuth: []
+      parameters:
+        - $ref: "#/components/parameters/From"
+        - $ref: "#/components/parameters/To"
+      responses:
+        "200":
+          description: 成功
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/XRequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InsightsDecay"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "500":
+          $ref: "#/components/responses/InternalError"
+      x-nbd-error-codes:
+        - VALIDATION_ERROR
+        - AUTH_REQUIRED
+  /api/v1/insights/calendar:
+    get:
+      operationId: getInsightsCalendar
+      tags:
+        - insights
+      summary: 日历热力图
+      security:
+        - cookieAuth: []
+      parameters:
+        - name: from
+          in: query
+          required: true
+          description: LocalDate，按 happenedOn 过滤（含当天）
+          schema:
+            type: string
+            format: date
+            description: LocalDate：YYYY-MM-DD，按所有者时区解释
+        - name: to
+          in: query
+          required: true
+          description: LocalDate，按 happenedOn 过滤（含当天）
+          schema:
+            type: string
+            format: date
+            description: LocalDate：YYYY-MM-DD，按所有者时区解释
+      responses:
+        "200":
+          description: 成功
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/XRequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InsightsCalendar"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "500":
+          $ref: "#/components/responses/InternalError"
+      x-nbd-error-codes:
+        - VALIDATION_ERROR
+        - RANGE_TOO_LARGE
+        - AUTH_REQUIRED
+  /api/v1/agent-keys:
+    get:
+      operationId: listAgentKeys
+      tags:
+        - access
+      summary: Agent 密钥列表（含已撤销、已过期）
+      security:
+        - cookieAuth: []
+      responses:
+        "200":
+          description: 成功
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/XRequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AgentKeyList"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "500":
+          $ref: "#/components/responses/InternalError"
+      x-nbd-error-codes:
+        - AUTH_REQUIRED
+    post:
+      operationId: createAgentKey
+      tags:
+        - access
+      summary: 新建 Agent 密钥
+      description: 必须再输一次当前密码。完整密钥只在本次响应里出现。同时有效的密钥最多 20 把。
+      security:
+        - cookieAuth: []
+      parameters:
+        - $ref: "#/components/parameters/XNbdRequest"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AgentKeyCreate"
+      responses:
+        "201":
+          description: 已创建
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/XRequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AgentKeyCreated"
+              example:
+                agentKey:
+                  id: f2d9b6c4-8e1a-4b53-a7c0-9d3e5f1b8a64
+                  label: Claude Code（MacBook）
+                  prefix: nbd_ak_Q3vX
+                  scopes:
+                    - read
+                    - write
+                  createdAt: 2026-10-10T15:20:00.000Z
+                  expiresAt: 2027-10-10T15:20:00.000Z
+                  lastUsedAt: null
+                  revokedAt: null
+                secret: nbd_ak_0000000000000000000000000000000000000000000
+                mcpUrl: https://nbd.dkz12345.com/mcp
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "500":
+          $ref: "#/components/responses/InternalError"
+      x-nbd-error-codes:
+        - VALIDATION_ERROR
+        - PASSWORD_INCORRECT
+        - TOO_MANY_KEYS
+        - AUTH_BUSY
+  /api/v1/agent-keys/{keyId}:
+    delete:
+      operationId: revokeAgentKey
+      tags:
+        - access
+      summary: 撤销 Agent 密钥（立即生效）
+      security:
+        - cookieAuth: []
+      parameters:
+        - $ref: "#/components/parameters/KeyId"
+        - $ref: "#/components/parameters/XNbdRequest"
+      responses:
+        "200":
+          description: 成功
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/XRequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AgentKey"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "500":
+          $ref: "#/components/responses/InternalError"
+      x-nbd-error-codes:
+        - AGENT_KEY_NOT_FOUND
+  /api/v1/connected-apps:
+    get:
+      operationId: listConnectedApps
+      tags:
+        - access
+      summary: 已连接的应用（OAuth 授权）
+      security:
+        - cookieAuth: []
+      responses:
+        "200":
+          description: 成功
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/XRequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConnectedAppList"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "500":
+          $ref: "#/components/responses/InternalError"
+      x-nbd-error-codes:
+        - AUTH_REQUIRED
+  /api/v1/connected-apps/{appId}:
+    delete:
+      operationId: revokeConnectedApp
+      tags:
+        - access
+      summary: 断开应用（撤销授权及其全部令牌）
+      security:
+        - cookieAuth: []
+      parameters:
+        - $ref: "#/components/parameters/AppId"
+        - $ref: "#/components/parameters/XNbdRequest"
+      responses:
+        "204":
+          description: 已撤销
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/XRequestId"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "500":
+          $ref: "#/components/responses/InternalError"
+      x-nbd-error-codes:
+        - APP_NOT_FOUND
+  /api/v1/settings:
+    get:
+      operationId: getSettings
+      tags:
+        - data
+      summary: 设置
+      security:
+        - cookieAuth: []
+      responses:
+        "200":
+          description: 成功
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/XRequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Settings"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "500":
+          $ref: "#/components/responses/InternalError"
+      x-nbd-error-codes:
+        - AUTH_REQUIRED
+    patch:
+      operationId: updateSettings
+      tags:
+        - data
+      summary: 修改设置
+      security:
+        - cookieAuth: []
+      parameters:
+        - $ref: "#/components/parameters/XNbdRequest"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SettingsPatch"
+      responses:
+        "200":
+          description: 成功
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/XRequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Settings"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "500":
+          $ref: "#/components/responses/InternalError"
+      x-nbd-error-codes:
+        - VALIDATION_ERROR
+        - INVALID_TIMEZONE
+  /api/v1/export:
+    get:
+      operationId: exportData
+      tags:
+        - data
+      summary: 导出全部数据（JSON）
+      description: "以附件形式下载（Content-Disposition: attachment）。v1 只有 format=json；Markdown 导出是 P6 的可选项。"
+      security:
+        - cookieAuth: []
+      parameters:
+        - name: format
+          in: query
+          required: false
+          description: 导出格式
+          schema:
+            type: string
+            enum:
+              - json
+            default: json
+      responses:
+        "200":
+          description: 成功
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/XRequestId"
+            Content-Disposition:
+              schema:
+                type: string
+              description: attachment; filename="nbd-export-YYYYMMDD.json"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ExportDocument"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "500":
+          $ref: "#/components/responses/InternalError"
+      x-nbd-error-codes:
+        - AUTH_REQUIRED
+  /api/v1/audit:
+    get:
+      operationId: listAudit
+      tags:
+        - data
+      summary: 操作记录
+      security:
+        - cookieAuth: []
+      parameters:
+        - name: channel
+          in: query
+          required: false
+          description: 按来源过滤
+          schema:
+            $ref: "#/components/schemas/AuditChannel"
+        - $ref: "#/components/parameters/Cursor"
+        - name: limit
+          in: query
+          required: false
+          description: 每页条数，默认 50，最多 100
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 50
+      responses:
+        "200":
+          description: 成功
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/XRequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuditPage"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "500":
+          $ref: "#/components/responses/InternalError"
+      x-nbd-error-codes:
+        - VALIDATION_ERROR
+        - AUTH_REQUIRED
+components:
+  securitySchemes:
+    cookieAuth:
+      type: apiKey
+      in: cookie
+      name: __Host-nbd_sid
+      description: 生产环境的会话 Cookie；本地 COOKIE_SECURE=false 时名为 nbd_sid
+  headers:
+    XRequestId:
+      description: 本次请求的 ID，错误响应体里的 requestId 与它相同
+      schema:
+        type: string
+  parameters:
+    XNbdRequest:
+      name: X-NBD-Request
+      in: header
+      required: true
+      description: 所有写请求（POST/PUT/PATCH/DELETE）必须带，值固定为 1；缺少时返回 403 REQUEST_HEADER_REQUIRED
+      schema:
+        type: string
+        enum:
+          - "1"
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: false
+      description: 可选。重试同一次新建时带同一个值，24 小时内不会重复创建；同键不同内容返回 409 IDEMPOTENCY_CONFLICT
+      schema:
+        type: string
+        pattern: ^[A-Za-z0-9_-]{8,64}$
+    MomentId:
+      name: momentId
+      in: path
+      required: true
+      description: 事件 ID
+      schema:
+        type: string
+        format: uuid
+    NoteId:
+      name: noteId
+      in: path
+      required: true
+      description: 补记 ID
+      schema:
+        type: string
+        format: uuid
+    ReflectionId:
+      name: reflectionId
+      in: path
+      required: true
+      description: 复盘 ID
+      schema:
+        type: string
+        format: uuid
+    LessonId:
+      name: lessonId
+      in: path
+      required: true
+      description: 经验 ID
+      schema:
+        type: string
+        format: uuid
+    TagId:
+      name: tagId
+      in: path
+      required: true
+      description: 标签 ID
+      schema:
+        type: string
+        format: uuid
+    KeyId:
+      name: keyId
+      in: path
+      required: true
+      description: Agent 密钥 ID
+      schema:
+        type: string
+        format: uuid
+    AppId:
+      name: appId
+      in: path
+      required: true
+      description: 授权（grant）ID
+      schema:
+        type: string
+        format: uuid
+    Cursor:
+      name: cursor
+      in: query
+      required: false
+      description: 上一页返回的 nextCursor，原样传回
+      schema:
+        type: string
+        maxLength: 200
+    Limit:
+      name: limit
+      in: query
+      required: false
+      description: 每页条数，默认 20，最多 100
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 20
+    From:
+      name: from
+      in: query
+      required: false
+      description: LocalDate，按 happenedOn 过滤（含当天）
+      schema:
+        type: string
+        format: date
+        description: LocalDate：YYYY-MM-DD，按所有者时区解释
+    To:
+      name: to
+      in: query
+      required: false
+      description: LocalDate，按 happenedOn 过滤（含当天）
+      schema:
+        type: string
+        format: date
+        description: LocalDate：YYYY-MM-DD，按所有者时区解释
+  responses:
+    BadRequest:
+      description: 参数错误
+      headers:
+        X-Request-Id:
+          $ref: "#/components/headers/XRequestId"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          example:
+            error:
+              code: VALIDATION_ERROR
+              message: 参数不符合要求
+              details:
+                field: title
+            requestId: req-1a2b
+    Unauthorized:
+      description: 需要登录
+      headers:
+        X-Request-Id:
+          $ref: "#/components/headers/XRequestId"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          example:
+            error:
+              code: AUTH_REQUIRED
+              message: 请先登录
+            requestId: req-1a2b
+    Forbidden:
+      description: 请求防护或权限失败
+      headers:
+        X-Request-Id:
+          $ref: "#/components/headers/XRequestId"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          example:
+            error:
+              code: REQUEST_HEADER_REQUIRED
+              message: 写请求缺少 X-NBD-Request 头
+            requestId: req-1a2b
+    NotFound:
+      description: 资源不存在
+      headers:
+        X-Request-Id:
+          $ref: "#/components/headers/XRequestId"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          example:
+            error:
+              code: MOMENT_NOT_FOUND
+              message: 这件事不存在或已被彻底删除
+            requestId: req-1a2b
+    Conflict:
+      description: 状态冲突
+      headers:
+        X-Request-Id:
+          $ref: "#/components/headers/XRequestId"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          example:
+            error:
+              code: MOMENT_CONFLICT
+              message: 这件事刚被修改过，请刷新后再改
+              details:
+                currentRevision: 3
+            requestId: req-1a2b
+    PayloadTooLarge:
+      description: 请求体过大
+      headers:
+        X-Request-Id:
+          $ref: "#/components/headers/XRequestId"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          example:
+            error:
+              code: PAYLOAD_TOO_LARGE
+              message: 内容太长了
+            requestId: req-1a2b
+    TooManyRequests:
+      description: 限流
+      headers:
+        X-Request-Id:
+          $ref: "#/components/headers/XRequestId"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          example:
+            error:
+              code: RATE_LIMITED
+              message: 请求太频繁，请稍后再试
+            requestId: req-1a2b
+    InternalError:
+      description: 服务异常
+      headers:
+        X-Request-Id:
+          $ref: "#/components/headers/XRequestId"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          example:
+            error:
+              code: INTERNAL_ERROR
+              message: 服务出错了，请带上 requestId 排查
+            requestId: req-1a2b
+    ServiceUnavailable:
+      description: 存储忙或暂不可用
+      headers:
+        X-Request-Id:
+          $ref: "#/components/headers/XRequestId"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          example:
+            error:
+              code: STORAGE_BUSY
+              message: 服务暂时忙，请稍后重试
+            requestId: req-1a2b
+  schemas:
+    Scene:
+      type: string
+      enum:
+        - work
+        - study
+        - social
+        - family
+        - romance
+        - online
+        - public
+        - other
+      description: work=工作；study=学习；social=社交；family=家庭；romance=感情；online=网络；public=公共场合；other=其他
+    Emotion:
+      type: string
+      enum:
+        - embarrassed
+        - ashamed
+        - anxious
+        - afraid
+        - guilty
+        - regretful
+        - angry
+        - aggrieved
+        - sad
+        - helpless
+        - other
+      description: embarrassed=尴尬；ashamed=丢脸；anxious=焦虑；afraid=害怕；guilty=内疚；regretful=后悔；angry=生气；aggrieved=委屈；sad=难过；helpless=无力；other=其他
+    ThinkingTrap:
+      type: string
+      enum:
+        - spotlight
+        - catastrophizing
+        - mind_reading
+        - fortune_telling
+        - overgeneralizing
+        - personalizing
+        - all_or_nothing
+        - should
+      description: spotlight=聚光灯效应（以为所有人都在注意自己）；catastrophizing=灾难化（直接想到最坏的结果）；mind_reading=读心术（认定别人一定是这么看我的）；fortune_telling=预言未来（认定坏结果一定会发生）；overgeneralizing=以偏概全（一次出错就当成「我总是这样」）；personalizing=个人化（把不全是自己的责任都揽到身上）；all_or_nothing=非黑即白（不是完美就是彻底失败）；should=应该思维（「我本应该……」式的苛责）
+    Resolution:
+      type: string
+      enum:
+        - let_go
+        - easing
+        - still_matters
+      description: let_go=放下了；easing=好多了；still_matters=还在意
+    FearCameTrue:
+      type: string
+      enum:
+        - no
+        - partly
+        - yes
+        - unknown
+      description: no=没发生；partly=部分发生；yes=发生了；unknown=还不知道
+    MomentStatus:
+      type: string
+      enum:
+        - fresh
+        - cooling
+        - due
+        - reflected
+        - settled
+        - archived
+      description: fresh=刚记下；cooling=冷却中；due=该回看；reflected=已回看；settled=已释怀；archived=已归档
+    HappenedAtPrecision:
+      type: string
+      enum:
+        - exact
+        - day
+        - approx
+      description: exact=精确时间；day=只知道日期；approx=大概
+    Scope:
+      type: string
+      enum:
+        - read
+        - write
+      description: read=读取历史；write=记录与补记
+    ActorKind:
+      type: string
+      enum:
+        - owner
+        - agent_key
+        - oauth_app
+        - system
+        - anonymous
+      description: owner=我（网页）；agent_key=Agent 密钥；oauth_app=已连接应用；system=系统；anonymous=未登录的访客（如登录失败）
+    AuditChannel:
+      type: string
+      enum:
+        - web
+        - mcp
+        - oauth
+        - cli
+        - system
+      description: web=网页；mcp=MCP；oauth=OAuth；cli=命令行；system=系统任务
+    MomentSort:
+      type: string
+      enum:
+        - happened_desc
+        - happened_asc
+        - captured_desc
+        - intensity_desc
+      description: happened_desc=发生时间从新到旧；happened_asc=发生时间从旧到新；captured_desc=记录时间从新到旧；intensity_desc=当时强度从高到低
+    Error:
+      type: object
+      additionalProperties: false
+      required:
+        - error
+        - requestId
+      properties:
+        error:
+          type: object
+          additionalProperties: false
+          required:
+            - code
+            - message
+          properties:
+            code:
+              type: string
+              minLength: 1
+              maxLength: 64
+              description: 错误码（SCREAMING_SNAKE_CASE），完整列表见 docs/API.md 的错误码表
+              pattern: ^[A-Z][A-Z0-9_]*$
+            message:
+              type: string
+              description: 给人看的中文说明，不含堆栈、SQL 或服务器路径
+            details:
+              type: object
+              additionalProperties: true
+              description: 部分错误附带的结构化信息，例如 currentRevision、editableUntil
+        requestId:
+          type: string
+          description: 与响应头 X-Request-Id 相同，排障时提供
+    Ok:
+      type: object
+      additionalProperties: false
+      required:
+        - ok
+      properties:
+        ok:
+          type: boolean
+          enum:
+            - true
+    Health:
+      type: object
+      additionalProperties: false
+      required:
+        - ok
+      properties:
+        ok:
+          type: boolean
+          enum:
+            - true
+    Ready:
+      type: object
+      additionalProperties: false
+      required:
+        - ok
+        - schemaVersion
+      properties:
+        ok:
+          type: boolean
+          description: 迁移版本与代码一致且数据库可读时为 true
+        schemaVersion:
+          type: integer
+          minimum: 1
+          maximum: 100000
+    Actor:
+      type: object
+      additionalProperties: false
+      required:
+        - kind
+        - id
+        - label
+      properties:
+        kind:
+          description: 谁做的
+          allOf:
+            - $ref: "#/components/schemas/ActorKind"
+        id:
+          type: string
+          minLength: 1
+          maxLength: 64
+          description: Agent 密钥 ID 或 OAuth 授权 ID；owner、system、anonymous 为 null
+          nullable: true
+        label:
+          type: string
+          minLength: 1
+          maxLength: 80
+          description: 展示名，例如「Claude Code（MacBook）」「Claude」「我」
+    EnumItem:
+      type: object
+      additionalProperties: false
+      required:
+        - key
+        - label
+      properties:
+        key:
+          type: string
+        label:
+          type: string
+        hint:
+          type: string
+          description: 可选的补充说明（思维陷阱有）
+    EmotionScore:
+      type: object
+      additionalProperties: false
+      required:
+        - key
+        - intensity
+      properties:
+        key:
+          $ref: "#/components/schemas/Emotion"
+        intensity:
+          type: integer
+          minimum: 0
+          maximum: 10
+          description: 这种情绪单独的强度；没有单独评分时为 null
+          nullable: true
+    EmotionScoreInput:
+      type: object
+      additionalProperties: false
+      required:
+        - key
+      properties:
+        key:
+          $ref: "#/components/schemas/Emotion"
+        intensity:
+          type: integer
+          minimum: 0
+          maximum: 10
+          description: 可选：这种情绪单独的强度
+    User:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - username
+        - displayName
+        - timezone
+        - weekStartsOn
+        - createdAt
+      properties:
+        id:
+          type: string
+          format: uuid
+        username:
+          type: string
+          minLength: 3
+          maxLength: 20
+        displayName:
+          type: string
+          minLength: 1
+          maxLength: 24
+        timezone:
+          type: string
+          description: IANA 时区，例如 Asia/Shanghai
+        weekStartsOn:
+          type: integer
+          minimum: 0
+          maximum: 6
+          description: 一周从哪天开始：0=周日，1=周一 … 6=周六
+        createdAt:
+          type: string
+          format: date-time
+          description: Instant：UTC ISO 8601，精确到毫秒
+    UserResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - user
+      properties:
+        user:
+          $ref: "#/components/schemas/User"
+    MeResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - user
+      properties:
+        user:
+          type: object
+          additionalProperties: false
+          required:
+            - id
+            - username
+            - displayName
+            - timezone
+            - weekStartsOn
+            - createdAt
+          properties:
+            id:
+              type: string
+              format: uuid
+            username:
+              type: string
+              minLength: 3
+              maxLength: 20
+            displayName:
+              type: string
+              minLength: 1
+              maxLength: 24
+            timezone:
+              type: string
+              description: IANA 时区，例如 Asia/Shanghai
+            weekStartsOn:
+              type: integer
+              minimum: 0
+              maximum: 6
+              description: 一周从哪天开始：0=周日，1=周一 … 6=周六
+            createdAt:
+              type: string
+              format: date-time
+              description: Instant：UTC ISO 8601，精确到毫秒
+          nullable: true
+    LoginRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - username
+        - password
+      properties:
+        username:
+          type: string
+          minLength: 3
+          maxLength: 20
+          description: 大小写不敏感
+          pattern: ^[A-Za-z0-9_]+$
+        password:
+          type: string
+          minLength: 1
+          maxLength: 128
+    PasswordChange:
+      type: object
+      additionalProperties: false
+      required:
+        - currentPassword
+        - newPassword
+      properties:
+        currentPassword:
+          type: string
+          minLength: 1
+          maxLength: 128
+        newPassword:
+          type: string
+          minLength: 12
+          maxLength: 128
+          description: 至少 12 个字符
+    Settings:
+      type: object
+      additionalProperties: false
+      required:
+        - displayName
+        - timezone
+        - weekStartsOn
+      properties:
+        displayName:
+          type: string
+          minLength: 1
+          maxLength: 24
+        timezone:
+          type: string
+          description: IANA 时区；改时区只影响「今天」怎么算，已记录的日期不会被重算
+        weekStartsOn:
+          type: integer
+          minimum: 0
+          maximum: 6
+    SettingsPatch:
+      type: object
+      additionalProperties: false
+      required: []
+      properties:
+        displayName:
+          type: string
+          minLength: 1
+          maxLength: 24
+        timezone:
+          type: string
+          description: 必须是 Intl.supportedValuesOf("timeZone") 里的值，否则 400 INVALID_TIMEZONE
+        weekStartsOn:
+          type: integer
+          minimum: 0
+          maximum: 6
+      minProperties: 1
+    CaptureSnapshot:
+      type: object
+      additionalProperties: false
+      required:
+        - title
+        - narrative
+        - agentSummary
+        - happenedAt
+        - happenedOn
+        - happenedAtPrecision
+        - scene
+        - emotions
+        - intensity
+        - severity
+        - fearedOutcome
+        - outcomeKnownBy
+        - thoughts
+        - bodySignals
+        - immediateResponse
+        - people
+      properties:
+        title:
+          type: string
+          minLength: 1
+          maxLength: 60
+        narrative:
+          type: string
+          minLength: 1
+          maxLength: 20000
+          description: 用户原话，原样保存
+        agentSummary:
+          type: string
+          minLength: 1
+          maxLength: 500
+          description: Agent 的概括
+          nullable: true
+        happenedAt:
+          type: string
+          format: date-time
+          description: 发生时间。precision 为 day/approx 时是所有者时区当天 12:00 对应的 UTC 时刻，只用于排序
+        happenedOn:
+          type: string
+          format: date
+          description: 发生日期（所有者时区），日历和统计按它分组
+        happenedAtPrecision:
+          $ref: "#/components/schemas/HappenedAtPrecision"
+        scene:
+          $ref: "#/components/schemas/Scene"
+        emotions:
+          type: array
+          items:
+            $ref: "#/components/schemas/EmotionScore"
+          maxItems: 5
+          minItems: 1
+        intensity:
+          type: integer
+          minimum: 0
+          maximum: 10
+          description: 当时有多难受，0–10
+        severity:
+          type: integer
+          minimum: 0
+          maximum: 10
+          description: 当时觉得这件事有多严重，0–10；没评分为 null
+          nullable: true
+        fearedOutcome:
+          type: string
+          minLength: 1
+          maxLength: 1000
+          description: 当时担心会发生什么
+          nullable: true
+        outcomeKnownBy:
+          type: string
+          format: date
+          description: 什么时候能知道担心的事有没有发生；第一次回看会排在这天之后
+          nullable: true
+        thoughts:
+          type: string
+          minLength: 1
+          maxLength: 2000
+          description: 当时脑子里冒出来的想法
+          nullable: true
+        bodySignals:
+          type: string
+          minLength: 1
+          maxLength: 500
+          description: 身体反应，例如脸红、心跳快
+          nullable: true
+        immediateResponse:
+          type: string
+          minLength: 1
+          maxLength: 1000
+          description: 当下是怎么应对的
+          nullable: true
+        people:
+          type: array
+          items:
+            type: string
+            minLength: 1
+            maxLength: 20
+          maxItems: 10
+          description: 涉及的人，只写角色（如「新领导」），不写真名
+    MomentSummary:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - title
+        - happenedAt
+        - happenedOn
+        - happenedAtPrecision
+        - capturedAt
+        - scene
+        - emotions
+        - intensity
+        - severity
+        - latestIntensityNow
+        - latestResolution
+        - status
+        - nextReviewOn
+        - tags
+        - noteCount
+        - reflectionCount
+        - lessonCount
+        - hasFear
+        - source
+        - excerpt
+      properties:
+        id:
+          type: string
+          format: uuid
+        title:
+          type: string
+          minLength: 1
+          maxLength: 60
+        happenedAt:
+          type: string
+          format: date-time
+          description: 发生时间。precision 为 day/approx 时是所有者时区当天 12:00 对应的 UTC 时刻，只用于排序
+        happenedOn:
+          type: string
+          format: date
+          description: 发生日期（所有者时区），日历和统计按它分组
+        happenedAtPrecision:
+          $ref: "#/components/schemas/HappenedAtPrecision"
+        capturedAt:
+          type: string
+          format: date-time
+          description: 记录时间（服务器时间），也是冻结期和复盘排程的锚点
+        scene:
+          $ref: "#/components/schemas/Scene"
+        emotions:
+          type: array
+          items:
+            $ref: "#/components/schemas/EmotionScore"
+          maxItems: 5
+          minItems: 1
+        intensity:
+          type: integer
+          minimum: 0
+          maximum: 10
+          description: 当时有多难受，0–10
+        severity:
+          type: integer
+          minimum: 0
+          maximum: 10
+          description: 当时觉得这件事有多严重，0–10；没评分为 null
+          nullable: true
+        latestIntensityNow:
+          type: integer
+          minimum: 0
+          maximum: 10
+          description: 最近一次复盘时的强度；没有复盘为 null
+          nullable: true
+        latestResolution:
+          type: string
+          enum:
+            - let_go
+            - easing
+            - still_matters
+            - null
+          description: 最近一次复盘的结论。let_go=放下了；easing=好多了；still_matters=还在意
+          nullable: true
+        status:
+          description: 由后端推导，前端只展示
+          allOf:
+            - $ref: "#/components/schemas/MomentStatus"
+        nextReviewOn:
+          type: string
+          format: date
+          description: 下次该回看的日期；不再提醒时为 null
+          nullable: true
+        tags:
+          type: array
+          items:
+            type: string
+          maxItems: 10
+        noteCount:
+          type: integer
+          minimum: 0
+          maximum: 1000000000
+        reflectionCount:
+          type: integer
+          minimum: 0
+          maximum: 1000000000
+        lessonCount:
+          type: integer
+          minimum: 0
+          maximum: 1000000000
+        hasFear:
+          type: boolean
+          description: 当时是否写了担心的后果（fearedOutcome 不为空）
+        source:
+          $ref: "#/components/schemas/Actor"
+        excerpt:
+          type: string
+          minLength: 0
+          maxLength: 120
+          description: 正文开头最多 120 个字
+        matchSnippet:
+          type: string
+          minLength: 0
+          maxLength: 200
+          description: 只在带 q 搜索时出现：命中位置附近的片段
+    MomentPage:
+      type: object
+      additionalProperties: false
+      required:
+        - items
+        - nextCursor
+        - total
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/MomentSummary"
+          maxItems: 100
+        nextCursor:
+          type: string
+          minLength: 1
+          maxLength: 200
+          description: 下一页的游标；没有更多时为 null
+          nullable: true
+        total:
+          type: integer
+          minimum: 0
+          maximum: 1000000000
+          description: 符合筛选条件的总数
+    IntensityPoint:
+      type: object
+      additionalProperties: false
+      required:
+        - on
+        - dayOffset
+        - intensity
+        - kind
+        - reflectionId
+      properties:
+        on:
+          type: string
+          format: date
+          description: 这个点的日期
+        dayOffset:
+          type: integer
+          minimum: 0
+          maximum: 100000
+          description: 距离 happenedOn 的天数
+        intensity:
+          type: integer
+          minimum: 0
+          maximum: 10
+          description: 0–10 分
+        kind:
+          type: string
+          enum:
+            - capture
+            - reflection
+          description: capture=当时，reflection=某次复盘
+        reflectionId:
+          type: string
+          format: uuid
+          nullable: true
+    LessonRef:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - title
+      properties:
+        id:
+          type: string
+          format: uuid
+        title:
+          type: string
+          minLength: 1
+          maxLength: 80
+    MomentDetail:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - title
+        - happenedAt
+        - happenedOn
+        - happenedAtPrecision
+        - capturedAt
+        - scene
+        - emotions
+        - intensity
+        - severity
+        - latestIntensityNow
+        - latestResolution
+        - status
+        - nextReviewOn
+        - hasFear
+        - source
+        - narrative
+        - agentSummary
+        - fearedOutcome
+        - outcomeKnownBy
+        - thoughts
+        - bodySignals
+        - immediateResponse
+        - people
+        - tags
+        - noteCount
+        - reflectionCount
+        - lessonCount
+        - revision
+        - revisionCount
+        - editableUntil
+        - lastEditedAt
+        - lastEditedBy
+        - snoozedUntil
+        - reviewStep
+        - archivedAt
+        - deletedAt
+        - purgeAt
+        - notes
+        - reflections
+        - lessons
+        - intensitySeries
+        - webUrl
+      properties:
+        id:
+          type: string
+          format: uuid
+        title:
+          type: string
+          minLength: 1
+          maxLength: 60
+        happenedAt:
+          type: string
+          format: date-time
+          description: 发生时间。precision 为 day/approx 时是所有者时区当天 12:00 对应的 UTC 时刻，只用于排序
+        happenedOn:
+          type: string
+          format: date
+          description: 发生日期（所有者时区），日历和统计按它分组
+        happenedAtPrecision:
+          $ref: "#/components/schemas/HappenedAtPrecision"
+        capturedAt:
+          type: string
+          format: date-time
+          description: 记录时间（服务器时间），也是冻结期和复盘排程的锚点
+        scene:
+          $ref: "#/components/schemas/Scene"
+        emotions:
+          type: array
+          items:
+            $ref: "#/components/schemas/EmotionScore"
+          maxItems: 5
+          minItems: 1
+        intensity:
+          type: integer
+          minimum: 0
+          maximum: 10
+          description: 当时有多难受，0–10
+        severity:
+          type: integer
+          minimum: 0
+          maximum: 10
+          description: 当时觉得这件事有多严重，0–10；没评分为 null
+          nullable: true
+        latestIntensityNow:
+          type: integer
+          minimum: 0
+          maximum: 10
+          description: 最近一次复盘时的强度；没有复盘为 null
+          nullable: true
+        latestResolution:
+          type: string
+          enum:
+            - let_go
+            - easing
+            - still_matters
+            - null
+          description: 最近一次复盘的结论。let_go=放下了；easing=好多了；still_matters=还在意
+          nullable: true
+        status:
+          description: 由后端推导，前端只展示
+          allOf:
+            - $ref: "#/components/schemas/MomentStatus"
+        nextReviewOn:
+          type: string
+          format: date
+          description: 下次该回看的日期；不再提醒时为 null
+          nullable: true
+        hasFear:
+          type: boolean
+          description: 当时是否写了担心的后果（fearedOutcome 不为空）
+        source:
+          $ref: "#/components/schemas/Actor"
+        narrative:
+          type: string
+          minLength: 1
+          maxLength: 20000
+          description: 用户原话，原样保存
+        agentSummary:
+          type: string
+          minLength: 1
+          maxLength: 500
+          description: Agent 的概括
+          nullable: true
+        fearedOutcome:
+          type: string
+          minLength: 1
+          maxLength: 1000
+          description: 当时担心会发生什么
+          nullable: true
+        outcomeKnownBy:
+          type: string
+          format: date
+          description: 什么时候能知道担心的事有没有发生；第一次回看会排在这天之后
+          nullable: true
+        thoughts:
+          type: string
+          minLength: 1
+          maxLength: 2000
+          description: 当时脑子里冒出来的想法
+          nullable: true
+        bodySignals:
+          type: string
+          minLength: 1
+          maxLength: 500
+          description: 身体反应，例如脸红、心跳快
+          nullable: true
+        immediateResponse:
+          type: string
+          minLength: 1
+          maxLength: 1000
+          description: 当下是怎么应对的
+          nullable: true
+        people:
+          type: array
+          items:
+            type: string
+            minLength: 1
+            maxLength: 20
+          maxItems: 10
+          description: 涉及的人，只写角色（如「新领导」），不写真名
+        tags:
+          type: array
+          items:
+            type: string
+          maxItems: 10
+        noteCount:
+          type: integer
+          minimum: 0
+          maximum: 1000000000
+        reflectionCount:
+          type: integer
+          minimum: 0
+          maximum: 1000000000
+        lessonCount:
+          type: integer
+          minimum: 0
+          maximum: 1000000000
+        revision:
+          type: integer
+          minimum: 1
+          maximum: 1000000
+          description: 当前修订号；改动原始记录时要回传 expectedRevision
+        revisionCount:
+          type: integer
+          minimum: 0
+          maximum: 1000000000
+          description: 被替换下来的旧版本数量（0 表示从没改过）
+        editableUntil:
+          type: string
+          format: date-time
+          description: Agent 能用 correct_moment 更正的截止时间（记录后 24 小时）
+        lastEditedAt:
+          type: string
+          format: date-time
+          description: Instant：UTC ISO 8601，精确到毫秒
+          nullable: true
+        lastEditedBy:
+          type: object
+          additionalProperties: false
+          required:
+            - kind
+            - id
+            - label
+          properties:
+            kind:
+              description: 谁做的
+              allOf:
+                - $ref: "#/components/schemas/ActorKind"
+            id:
+              type: string
+              minLength: 1
+              maxLength: 64
+              description: Agent 密钥 ID 或 OAuth 授权 ID；owner、system、anonymous 为 null
+              nullable: true
+            label:
+              type: string
+              minLength: 1
+              maxLength: 80
+              description: 展示名，例如「Claude Code（MacBook）」「Claude」「我」
+          nullable: true
+        snoozedUntil:
+          type: string
+          format: date
+          description: 推迟到哪天；没有推迟为 null
+          nullable: true
+        reviewStep:
+          type: object
+          additionalProperties: false
+          required:
+            - done
+            - total
+          properties:
+            done:
+              type: integer
+              minimum: 0
+              maximum: 100
+              description: 已经完成的排程步数
+            total:
+              type: integer
+              minimum: 0
+              maximum: 100
+              description: 排程总步数；自动排程关闭时为 0
+        archivedAt:
+          type: string
+          format: date-time
+          description: Instant：UTC ISO 8601，精确到毫秒
+          nullable: true
+        deletedAt:
+          type: string
+          format: date-time
+          description: 在回收站中时才有值
+          nullable: true
+        purgeAt:
+          type: string
+          format: date-time
+          description: 在回收站中时，会被彻底删除的时间
+          nullable: true
+        notes:
+          type: array
+          items:
+            $ref: "#/components/schemas/Note"
+          maxItems: 500
+        reflections:
+          type: array
+          items:
+            $ref: "#/components/schemas/Reflection"
+          maxItems: 500
+          description: 按时间从旧到新
+        lessons:
+          type: array
+          items:
+            $ref: "#/components/schemas/LessonRef"
+          maxItems: 500
+        intensitySeries:
+          type: array
+          items:
+            $ref: "#/components/schemas/IntensityPoint"
+          maxItems: 500
+          description: 「当时」加上每次复盘的强度，画强度变化小图用
+        webUrl:
+          type: string
+          format: uri
+    MomentPatch:
+      type: object
+      additionalProperties: false
+      required:
+        - expectedRevision
+      properties:
+        expectedRevision:
+          type: integer
+          minimum: 1
+          maximum: 1000000
+          description: 必须等于当前 revision，否则 409 MOMENT_CONFLICT
+        reason:
+          type: string
+          minLength: 1
+          maxLength: 200
+          description: 为什么改，会写进修订记录
+        title:
+          type: string
+          minLength: 1
+          maxLength: 60
+        narrative:
+          type: string
+          minLength: 1
+          maxLength: 20000
+        agentSummary:
+          type: string
+          minLength: 1
+          maxLength: 500
+          nullable: true
+        happenedAt:
+          type: string
+          minLength: 10
+          maxLength: 35
+          description: 发生时间。精确时间写带时区偏移的 ISO 时间（如 2026-10-11T21:30:00+08:00）；只知道日期写 YYYY-MM-DD 并配合 happenedAtPrecision=day 或 approx。不填即为现在；晚于现在 10 分钟以上会被拒绝（HAPPENED_AT_IN_FUTURE）
+          pattern: ^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}(:\d{2}(\.\d{1,3})?)?(Z|[+-]\d{2}:\d{2}))?$
+        happenedAtPrecision:
+          $ref: "#/components/schemas/HappenedAtPrecision"
+        scene:
+          $ref: "#/components/schemas/Scene"
+        emotions:
+          type: array
+          items:
+            $ref: "#/components/schemas/EmotionScoreInput"
+          maxItems: 5
+          minItems: 1
+        intensity:
+          type: integer
+          minimum: 0
+          maximum: 10
+          description: 0–10 分
+        severity:
+          type: integer
+          minimum: 0
+          maximum: 10
+          nullable: true
+        fearedOutcome:
+          type: string
+          minLength: 1
+          maxLength: 1000
+          nullable: true
+        outcomeKnownBy:
+          type: string
+          format: date
+          description: LocalDate：YYYY-MM-DD，按所有者时区解释
+          nullable: true
+        thoughts:
+          type: string
+          minLength: 1
+          maxLength: 2000
+          nullable: true
+        bodySignals:
+          type: string
+          minLength: 1
+          maxLength: 500
+          nullable: true
+        immediateResponse:
+          type: string
+          minLength: 1
+          maxLength: 1000
+          nullable: true
+        people:
+          type: array
+          items:
+            type: string
+            minLength: 1
+            maxLength: 20
+          maxItems: 10
+      minProperties: 2
+      description: 只改原始记录的内容，每次修改都会生成一条修订记录。缺省的字段不变，可选字段传 null 表示清空。标签、归档、推迟走各自的接口。
+    Revision:
+      type: object
+      additionalProperties: false
+      required:
+        - revision
+        - snapshot
+        - changedFields
+        - editedBy
+        - reason
+        - editedAt
+      properties:
+        revision:
+          type: integer
+          minimum: 1
+          maximum: 1000000
+          description: 这份快照对应的修订号；1 是最初的原始记录
+        snapshot:
+          $ref: "#/components/schemas/CaptureSnapshot"
+        changedFields:
+          type: array
+          items:
+            type: string
+          maxItems: 20
+          description: 从这一版改到下一版时变了哪些字段
+        editedBy:
+          $ref: "#/components/schemas/Actor"
+        reason:
+          type: string
+          minLength: 1
+          maxLength: 200
+          nullable: true
+        editedAt:
+          type: string
+          format: date-time
+          description: 改成下一版的时间
+    RevisionList:
+      type: object
+      additionalProperties: false
+      required:
+        - current
+        - items
+      properties:
+        current:
+          type: integer
+          minimum: 1
+          maximum: 1000000
+          description: 当前修订号（当前内容见 MomentDetail）
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Revision"
+          maxItems: 500
+          description: 被替换下来的旧版本，按修订号从小到大
+    MomentTagsPut:
+      type: object
+      additionalProperties: false
+      required:
+        - names
+      properties:
+        names:
+          type: array
+          items:
+            type: string
+            minLength: 1
+            maxLength: 20
+          maxItems: 10
+          description: "整组替换；后端会去掉首尾空白和开头的 #，并做 NFKC 规范化"
+    MomentTags:
+      type: object
+      additionalProperties: false
+      required:
+        - momentId
+        - tags
+      properties:
+        momentId:
+          type: string
+          format: uuid
+        tags:
+          type: array
+          items:
+            type: string
+          maxItems: 10
+    Note:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - momentId
+        - body
+        - author
+        - createdAt
+      properties:
+        id:
+          type: string
+          format: uuid
+        momentId:
+          type: string
+          format: uuid
+        body:
+          type: string
+          minLength: 1
+          maxLength: 5000
+        author:
+          $ref: "#/components/schemas/Actor"
+        createdAt:
+          type: string
+          format: date-time
+          description: Instant：UTC ISO 8601，精确到毫秒
+    NoteCreate:
+      type: object
+      additionalProperties: false
+      required:
+        - body
+      properties:
+        body:
+          type: string
+          minLength: 1
+          maxLength: 5000
+          description: 补记内容，只追加，不能编辑
+    Reflection:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - momentId
+        - intensityNow
+        - severityNow
+        - fearCameTrue
+        - whatHappened
+        - perspective
+        - thinkingTraps
+        - resolution
+        - reflectedOn
+        - daysSinceHappened
+        - lessonIds
+        - author
+        - createdAt
+        - updatedAt
+      properties:
+        id:
+          type: string
+          format: uuid
+        momentId:
+          type: string
+          format: uuid
+        intensityNow:
+          type: integer
+          minimum: 0
+          maximum: 10
+          description: 现在想起来有多难受
+        severityNow:
+          type: integer
+          minimum: 0
+          maximum: 10
+          description: 现在觉得有多严重
+          nullable: true
+        fearCameTrue:
+          type: string
+          enum:
+            - no
+            - partly
+            - yes
+            - unknown
+            - null
+          description: 当时担心的事有没有发生。no=没发生；partly=部分发生；yes=发生了；unknown=还不知道
+          nullable: true
+        whatHappened:
+          type: string
+          minLength: 1
+          maxLength: 2000
+          description: 后来实际发生了什么
+          nullable: true
+        perspective:
+          type: string
+          minLength: 1
+          maxLength: 5000
+          description: 现在怎么看
+          nullable: true
+        thinkingTraps:
+          type: array
+          items:
+            $ref: "#/components/schemas/ThinkingTrap"
+          maxItems: 5
+          uniqueItems: true
+        resolution:
+          $ref: "#/components/schemas/Resolution"
+        reflectedOn:
+          type: string
+          format: date
+          description: 复盘当天（所有者时区）
+        daysSinceHappened:
+          type: integer
+          minimum: 0
+          maximum: 100000
+        lessonIds:
+          type: array
+          items:
+            type: string
+            format: uuid
+          maxItems: 10
+        author:
+          $ref: "#/components/schemas/Actor"
+        createdAt:
+          type: string
+          format: date-time
+          description: Instant：UTC ISO 8601，精确到毫秒
+        updatedAt:
+          type: string
+          format: date-time
+          description: Instant：UTC ISO 8601，精确到毫秒
+    ReflectionCreate:
+      type: object
+      additionalProperties: false
+      required:
+        - intensityNow
+        - resolution
+      properties:
+        intensityNow:
+          type: integer
+          minimum: 0
+          maximum: 10
+          description: 现在想起来有多难受，0–10
+        resolution:
+          description: 结论由用户自己选
+          allOf:
+            - $ref: "#/components/schemas/Resolution"
+        severityNow:
+          type: integer
+          minimum: 0
+          maximum: 10
+          description: 现在觉得有多严重
+        fearCameTrue:
+          description: 当时担心的事有没有发生；事件有 fearedOutcome 而这里不填时记为 unknown
+          allOf:
+            - $ref: "#/components/schemas/FearCameTrue"
+        whatHappened:
+          type: string
+          minLength: 1
+          maxLength: 2000
+          description: 后来实际发生了什么
+        perspective:
+          type: string
+          minLength: 1
+          maxLength: 5000
+          description: 现在怎么看这件事
+        thinkingTraps:
+          type: array
+          items:
+            $ref: "#/components/schemas/ThinkingTrap"
+          maxItems: 5
+          description: 回头看，当时掉进了哪些思维陷阱
+          uniqueItems: true
+        lessonIds:
+          type: array
+          items:
+            type: string
+            format: uuid
+          maxItems: 10
+          description: 关联已有的经验；新经验先用 createLesson 建好
+          uniqueItems: true
+    ReflectionPatch:
+      type: object
+      additionalProperties: false
+      required: []
+      properties:
+        intensityNow:
+          type: integer
+          minimum: 0
+          maximum: 10
+          description: 现在想起来有多难受，0–10
+        resolution:
+          description: 结论由用户自己选
+          allOf:
+            - $ref: "#/components/schemas/Resolution"
+        severityNow:
+          type: integer
+          minimum: 0
+          maximum: 10
+          description: 现在觉得有多严重
+          nullable: true
+        fearCameTrue:
+          type: string
+          enum:
+            - no
+            - partly
+            - yes
+            - unknown
+            - null
+          description: 当时担心的事有没有发生；事件有 fearedOutcome 而这里不填时记为 unknown。no=没发生；partly=部分发生；yes=发生了；unknown=还不知道
+          nullable: true
+        whatHappened:
+          type: string
+          minLength: 1
+          maxLength: 2000
+          description: 后来实际发生了什么
+          nullable: true
+        perspective:
+          type: string
+          minLength: 1
+          maxLength: 5000
+          description: 现在怎么看这件事
+          nullable: true
+        thinkingTraps:
+          type: array
+          items:
+            $ref: "#/components/schemas/ThinkingTrap"
+          maxItems: 5
+          description: 回头看，当时掉进了哪些思维陷阱
+          uniqueItems: true
+        lessonIds:
+          type: array
+          items:
+            type: string
+            format: uuid
+          maxItems: 10
+          description: 关联已有的经验；新经验先用 createLesson 建好
+          uniqueItems: true
+      minProperties: 1
+    IntensityComparison:
+      type: object
+      additionalProperties: false
+      required:
+        - intensityThen
+        - intensityNow
+        - change
+        - daysSinceHappened
+      properties:
+        intensityThen:
+          type: integer
+          minimum: 0
+          maximum: 10
+          description: 记录时的强度
+        intensityNow:
+          type: integer
+          minimum: 0
+          maximum: 10
+          description: 这次复盘的强度
+        change:
+          type: integer
+          minimum: -10
+          maximum: 10
+          description: 现在减当时，负数表示减轻了
+        daysSinceHappened:
+          type: integer
+          minimum: 0
+          maximum: 100000
+    MomentScheduleRef:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - status
+        - nextReviewOn
+      properties:
+        id:
+          type: string
+          format: uuid
+        status:
+          $ref: "#/components/schemas/MomentStatus"
+        nextReviewOn:
+          type: string
+          format: date
+          description: LocalDate：YYYY-MM-DD，按所有者时区解释
+          nullable: true
+    ReflectionResult:
+      type: object
+      additionalProperties: false
+      required:
+        - reflection
+        - moment
+        - comparison
+      properties:
+        reflection:
+          $ref: "#/components/schemas/Reflection"
+        moment:
+          $ref: "#/components/schemas/MomentScheduleRef"
+        comparison:
+          $ref: "#/components/schemas/IntensityComparison"
+    DueMoment:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - title
+        - excerpt
+        - happenedOn
+        - happenedAtPrecision
+        - scene
+        - emotions
+        - intensity
+        - severity
+        - fearedOutcome
+      properties:
+        id:
+          type: string
+          format: uuid
+        title:
+          type: string
+          minLength: 1
+          maxLength: 60
+        excerpt:
+          type: string
+          minLength: 0
+          maxLength: 120
+        happenedOn:
+          type: string
+          format: date
+          description: LocalDate：YYYY-MM-DD，按所有者时区解释
+        happenedAtPrecision:
+          $ref: "#/components/schemas/HappenedAtPrecision"
+        scene:
+          $ref: "#/components/schemas/Scene"
+        emotions:
+          type: array
+          items:
+            $ref: "#/components/schemas/EmotionScore"
+          maxItems: 5
+        intensity:
+          type: integer
+          minimum: 0
+          maximum: 10
+          description: 当时的强度
+        severity:
+          type: integer
+          minimum: 0
+          maximum: 10
+          nullable: true
+        fearedOutcome:
+          type: string
+          minLength: 1
+          maxLength: 1000
+          nullable: true
+    DueItem:
+      type: object
+      additionalProperties: false
+      required:
+        - moment
+        - dueOn
+        - overdueDays
+        - step
+        - lastReflection
+      properties:
+        moment:
+          $ref: "#/components/schemas/DueMoment"
+        dueOn:
+          type: string
+          format: date
+          description: 该回看的日期
+        overdueDays:
+          type: integer
+          minimum: 0
+          maximum: 100000
+          description: 过期几天；当天到期或即将到期为 0
+        step:
+          type: object
+          additionalProperties: false
+          required:
+            - index
+            - total
+          properties:
+            index:
+              type: integer
+              minimum: 1
+              maximum: 100
+              description: 这是第几次排程回看
+            total:
+              type: integer
+              minimum: 0
+              maximum: 100
+        lastReflection:
+          type: object
+          additionalProperties: false
+          required:
+            - createdAt
+            - intensityNow
+            - resolution
+          properties:
+            createdAt:
+              type: string
+              format: date-time
+              description: Instant：UTC ISO 8601，精确到毫秒
+            intensityNow:
+              type: integer
+              minimum: 0
+              maximum: 10
+              description: 0–10 分
+            resolution:
+              $ref: "#/components/schemas/Resolution"
+          nullable: true
+    DueList:
+      type: object
+      additionalProperties: false
+      required:
+        - items
+        - dueCount
+        - upcoming
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/DueItem"
+          maxItems: 500
+          description: 已到期，按 dueOn 从早到晚
+        dueCount:
+          type: integer
+          minimum: 0
+          maximum: 1000000000
+          description: 已到期的总数，也用作导航角标
+        upcoming:
+          type: array
+          items:
+            $ref: "#/components/schemas/DueItem"
+          maxItems: 500
+          description: 未来 upcomingDays 天内将到期的
+    SnoozeRequest:
+      description: 二选一：推迟几天（1–90），或推迟到某一天（不晚于 90 天后）
+      oneOf:
+        - type: object
+          additionalProperties: false
+          required:
+            - days
+          properties:
+            days:
+              type: integer
+              minimum: 1
+              maximum: 90
+        - type: object
+          additionalProperties: false
+          required:
+            - until
+          properties:
+            until:
+              type: string
+              format: date
+              description: LocalDate：YYYY-MM-DD，按所有者时区解释
+    ScheduleState:
+      type: object
+      additionalProperties: false
+      required:
+        - momentId
+        - status
+        - nextReviewOn
+        - snoozedUntil
+      properties:
+        momentId:
+          type: string
+          format: uuid
+        status:
+          $ref: "#/components/schemas/MomentStatus"
+        nextReviewOn:
+          type: string
+          format: date
+          description: LocalDate：YYYY-MM-DD，按所有者时区解释
+          nullable: true
+        snoozedUntil:
+          type: string
+          format: date
+          description: LocalDate：YYYY-MM-DD，按所有者时区解释
+          nullable: true
+    ArchiveState:
+      type: object
+      additionalProperties: false
+      required:
+        - momentId
+        - status
+        - archivedAt
+        - nextReviewOn
+      properties:
+        momentId:
+          type: string
+          format: uuid
+        status:
+          $ref: "#/components/schemas/MomentStatus"
+        archivedAt:
+          type: string
+          format: date-time
+          description: Instant：UTC ISO 8601，精确到毫秒
+          nullable: true
+        nextReviewOn:
+          type: string
+          format: date
+          description: LocalDate：YYYY-MM-DD，按所有者时区解释
+          nullable: true
+    TrashItem:
+      type: object
+      additionalProperties: false
+      required:
+        - moment
+        - deletedAt
+        - purgeAt
+      properties:
+        moment:
+          $ref: "#/components/schemas/MomentSummary"
+        deletedAt:
+          type: string
+          format: date-time
+          description: Instant：UTC ISO 8601，精确到毫秒
+        purgeAt:
+          type: string
+          format: date-time
+          description: 到这个时间会被彻底删除
+    TrashList:
+      type: object
+      additionalProperties: false
+      required:
+        - items
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/TrashItem"
+          maxItems: 500
+    TrashResult:
+      type: object
+      additionalProperties: false
+      required:
+        - momentId
+        - deletedAt
+        - purgeAt
+      properties:
+        momentId:
+          type: string
+          format: uuid
+        deletedAt:
+          type: string
+          format: date-time
+          description: Instant：UTC ISO 8601，精确到毫秒
+        purgeAt:
+          type: string
+          format: date-time
+          description: Instant：UTC ISO 8601，精确到毫秒
+    Lesson:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - title
+        - body
+        - momentCount
+        - author
+        - createdAt
+        - updatedAt
+      properties:
+        id:
+          type: string
+          format: uuid
+        title:
+          type: string
+          minLength: 1
+          maxLength: 80
+        body:
+          type: string
+          minLength: 0
+          maxLength: 5000
+          description: 纯文本
+        momentCount:
+          type: integer
+          minimum: 0
+          maximum: 1000000000
+          description: 关联的事件数（不含回收站里的）
+        author:
+          $ref: "#/components/schemas/Actor"
+        createdAt:
+          type: string
+          format: date-time
+          description: Instant：UTC ISO 8601，精确到毫秒
+        updatedAt:
+          type: string
+          format: date-time
+          description: Instant：UTC ISO 8601，精确到毫秒
+    LessonDetail:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - title
+        - body
+        - momentCount
+        - author
+        - createdAt
+        - updatedAt
+        - moments
+      properties:
+        id:
+          type: string
+          format: uuid
+        title:
+          type: string
+          minLength: 1
+          maxLength: 80
+        body:
+          type: string
+          minLength: 0
+          maxLength: 5000
+          description: 纯文本
+        momentCount:
+          type: integer
+          minimum: 0
+          maximum: 1000000000
+          description: 关联的事件数（不含回收站里的）
+        author:
+          $ref: "#/components/schemas/Actor"
+        createdAt:
+          type: string
+          format: date-time
+          description: Instant：UTC ISO 8601，精确到毫秒
+        updatedAt:
+          type: string
+          format: date-time
+          description: Instant：UTC ISO 8601，精确到毫秒
+        moments:
+          type: array
+          items:
+            $ref: "#/components/schemas/MomentSummary"
+          maxItems: 200
+    LessonList:
+      type: object
+      additionalProperties: false
+      required:
+        - items
+        - total
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Lesson"
+          maxItems: 500
+        total:
+          type: integer
+          minimum: 0
+          maximum: 1000000000
+    LessonCreate:
+      type: object
+      additionalProperties: false
+      required:
+        - title
+      properties:
+        title:
+          type: string
+          minLength: 1
+          maxLength: 80
+        body:
+          type: string
+          minLength: 0
+          maxLength: 5000
+        momentIds:
+          type: array
+          items:
+            type: string
+            format: uuid
+          maxItems: 200
+          uniqueItems: true
+    LessonPatch:
+      type: object
+      additionalProperties: false
+      required: []
+      properties:
+        title:
+          type: string
+          minLength: 1
+          maxLength: 80
+        body:
+          type: string
+          minLength: 0
+          maxLength: 5000
+      minProperties: 1
+    LessonMomentsPut:
+      type: object
+      additionalProperties: false
+      required:
+        - momentIds
+      properties:
+        momentIds:
+          type: array
+          items:
+            type: string
+            format: uuid
+          maxItems: 200
+          description: 整组替换
+          uniqueItems: true
+    Tag:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - name
+        - momentCount
+        - createdAt
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+          minLength: 1
+          maxLength: 20
+        momentCount:
+          type: integer
+          minimum: 0
+          maximum: 1000000000
+        createdAt:
+          type: string
+          format: date-time
+          description: Instant：UTC ISO 8601，精确到毫秒
+    TagList:
+      type: object
+      additionalProperties: false
+      required:
+        - items
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Tag"
+          maxItems: 500
+    TagRename:
+      type: object
+      additionalProperties: false
+      required:
+        - name
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 20
+    TagMerge:
+      type: object
+      additionalProperties: false
+      required:
+        - intoId
+      properties:
+        intoId:
+          type: string
+          format: uuid
+          description: 合并到哪个标签；当前标签会被删除
+    TagMergeResult:
+      type: object
+      additionalProperties: false
+      required:
+        - tag
+        - movedMoments
+      properties:
+        tag:
+          $ref: "#/components/schemas/Tag"
+        movedMoments:
+          type: integer
+          minimum: 0
+          maximum: 1000000000
+          description: 从被合并标签上改挂过来的事件数
+    KeyCount:
+      type: object
+      additionalProperties: false
+      required:
+        - key
+        - count
+      properties:
+        key:
+          type: string
+        count:
+          type: integer
+          minimum: 0
+          maximum: 1000000000
+    DateRange:
+      type: object
+      additionalProperties: false
+      required:
+        - from
+        - to
+      properties:
+        from:
+          type: string
+          format: date
+          description: LocalDate：YYYY-MM-DD，按所有者时区解释
+          nullable: true
+        to:
+          type: string
+          format: date
+          description: LocalDate：YYYY-MM-DD，按所有者时区解释
+          nullable: true
+    InsightsOverview:
+      type: object
+      additionalProperties: false
+      required:
+        - range
+        - minSample
+        - totals
+        - fear
+        - intensity
+        - letGo
+        - distributions
+      properties:
+        range:
+          $ref: "#/components/schemas/DateRange"
+        minSample:
+          type: integer
+          minimum: 1
+          maximum: 100
+          description: 样本数低于它时前端显示「样本不足」，v1 为 5
+        totals:
+          type: object
+          additionalProperties: false
+          required:
+            - moments
+            - reflected
+            - settled
+            - archived
+          properties:
+            moments:
+              type: integer
+              minimum: 0
+              maximum: 1000000000
+            reflected:
+              type: integer
+              minimum: 0
+              maximum: 1000000000
+              description: 至少复盘过一次
+            settled:
+              type: integer
+              minimum: 0
+              maximum: 1000000000
+            archived:
+              type: integer
+              minimum: 0
+              maximum: 1000000000
+        fear:
+          type: object
+          additionalProperties: false
+          required:
+            - withFear
+            - judged
+            - no
+            - partly
+            - yes
+            - unknown
+            - pending
+            - neverHappenedRate
+          properties:
+            withFear:
+              type: integer
+              minimum: 0
+              maximum: 1000000000
+              description: 写了 fearedOutcome 的事件数
+            judged:
+              type: integer
+              minimum: 0
+              maximum: 1000000000
+              description: no + partly + yes
+            no:
+              type: integer
+              minimum: 0
+              maximum: 1000000000
+            partly:
+              type: integer
+              minimum: 0
+              maximum: 1000000000
+            yes:
+              type: integer
+              minimum: 0
+              maximum: 1000000000
+            unknown:
+              type: integer
+              minimum: 0
+              maximum: 1000000000
+              description: 复盘过但都答「还不知道」
+            pending:
+              type: integer
+              minimum: 0
+              maximum: 1000000000
+              description: 还没复盘
+            neverHappenedRate:
+              type: number
+              minimum: 0
+              maximum: 1
+              description: no ÷ judged；judged 为 0 时为 null。每件事取最近一次不是 unknown 的回答
+              nullable: true
+        intensity:
+          type: object
+          additionalProperties: false
+          required:
+            - pairs
+            - meanThen
+            - meanNow
+            - meanDrop
+          properties:
+            pairs:
+              type: integer
+              minimum: 0
+              maximum: 1000000000
+              description: 至少复盘过一次的事件数
+            meanThen:
+              type: number
+              minimum: 0
+              maximum: 10
+              description: 这些事件当时强度的平均值
+              nullable: true
+            meanNow:
+              type: number
+              minimum: 0
+              maximum: 10
+              description: 这些事件最近一次复盘强度的平均值
+              nullable: true
+            meanDrop:
+              type: number
+              minimum: -10
+              maximum: 10
+              description: meanThen − meanNow
+              nullable: true
+        letGo:
+          type: object
+          additionalProperties: false
+          required:
+            - count
+            - medianDays
+          properties:
+            count:
+              type: integer
+              minimum: 0
+              maximum: 1000000000
+            medianDays:
+              type: number
+              minimum: 0
+              maximum: 100000
+              description: 从 happenedOn 到第一次 let_go 的天数中位数
+              nullable: true
+        distributions:
+          type: object
+          additionalProperties: false
+          required:
+            - emotions
+            - scenes
+            - thinkingTraps
+            - resolutions
+          properties:
+            emotions:
+              type: array
+              items:
+                $ref: "#/components/schemas/KeyCount"
+              maxItems: 20
+            scenes:
+              type: array
+              items:
+                $ref: "#/components/schemas/KeyCount"
+              maxItems: 20
+            thinkingTraps:
+              type: array
+              items:
+                $ref: "#/components/schemas/KeyCount"
+              maxItems: 20
+            resolutions:
+              type: array
+              items:
+                $ref: "#/components/schemas/KeyCount"
+              maxItems: 10
+      description: 统计不含回收站里的事件；归档的计入。from/to 按 happenedOn 过滤。
+    DecayBucket:
+      type: object
+      additionalProperties: false
+      required:
+        - key
+        - label
+        - n
+        - meanIntensity
+        - medianIntensity
+      properties:
+        key:
+          type: string
+          enum:
+            - d0_1
+            - d2_7
+            - d8_30
+            - d31_90
+            - d91p
+        label:
+          type: string
+          description: 例如「当天–1 天」「2–7 天」
+        n:
+          type: integer
+          minimum: 0
+          maximum: 1000000000
+        meanIntensity:
+          type: number
+          minimum: 0
+          maximum: 10
+          nullable: true
+        medianIntensity:
+          type: number
+          minimum: 0
+          maximum: 10
+          nullable: true
+    DecayPoint:
+      type: object
+      additionalProperties: false
+      required:
+        - momentId
+        - dayOffset
+        - intensity
+        - kind
+      properties:
+        momentId:
+          type: string
+          format: uuid
+        dayOffset:
+          type: integer
+          minimum: 0
+          maximum: 100000
+          description: 距离 happenedOn 的天数
+        intensity:
+          type: integer
+          minimum: 0
+          maximum: 10
+          description: 0–10 分
+        kind:
+          type: string
+          enum:
+            - capture
+            - reflection
+    InsightsDecay:
+      type: object
+      additionalProperties: false
+      required:
+        - range
+        - minSample
+        - buckets
+        - points
+      properties:
+        range:
+          $ref: "#/components/schemas/DateRange"
+        minSample:
+          type: integer
+          minimum: 1
+          maximum: 100
+        buckets:
+          type: array
+          items:
+            $ref: "#/components/schemas/DecayBucket"
+          maxItems: 5
+        points:
+          type: array
+          items:
+            $ref: "#/components/schemas/DecayPoint"
+          maxItems: 2000
+          description: 散点，最多 2000 个
+    CalendarDay:
+      type: object
+      additionalProperties: false
+      required:
+        - date
+        - count
+        - maxIntensity
+      properties:
+        date:
+          type: string
+          format: date
+          description: LocalDate：YYYY-MM-DD，按所有者时区解释
+        count:
+          type: integer
+          minimum: 1
+          maximum: 100000
+        maxIntensity:
+          type: integer
+          minimum: 0
+          maximum: 10
+          description: 当天各事件当时强度的最大值
+    InsightsCalendar:
+      type: object
+      additionalProperties: false
+      required:
+        - timezone
+        - weekStartsOn
+        - from
+        - to
+        - days
+      properties:
+        timezone:
+          type: string
+        weekStartsOn:
+          type: integer
+          minimum: 0
+          maximum: 6
+        from:
+          type: string
+          format: date
+          description: LocalDate：YYYY-MM-DD，按所有者时区解释
+        to:
+          type: string
+          format: date
+          description: LocalDate：YYYY-MM-DD，按所有者时区解释
+        days:
+          type: array
+          items:
+            $ref: "#/components/schemas/CalendarDay"
+          maxItems: 401
+          description: 只列出有记录的日子
+    AgentKey:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - label
+        - prefix
+        - scopes
+        - createdAt
+        - expiresAt
+        - lastUsedAt
+        - revokedAt
+      properties:
+        id:
+          type: string
+          format: uuid
+        label:
+          type: string
+          minLength: 1
+          maxLength: 40
+        prefix:
+          type: string
+          minLength: 11
+          maxLength: 11
+          description: 用来辨认是哪把密钥的前缀，不是密钥本身
+          pattern: ^nbd_ak_[A-Za-z0-9_-]{4}$
+        scopes:
+          type: array
+          items:
+            $ref: "#/components/schemas/Scope"
+          maxItems: 2
+          minItems: 1
+          uniqueItems: true
+        createdAt:
+          type: string
+          format: date-time
+          description: Instant：UTC ISO 8601，精确到毫秒
+        expiresAt:
+          type: string
+          format: date-time
+          description: Instant：UTC ISO 8601，精确到毫秒
+        lastUsedAt:
+          type: string
+          format: date-time
+          description: Instant：UTC ISO 8601，精确到毫秒
+          nullable: true
+        revokedAt:
+          type: string
+          format: date-time
+          description: Instant：UTC ISO 8601，精确到毫秒
+          nullable: true
+    AgentKeyList:
+      type: object
+      additionalProperties: false
+      required:
+        - items
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/AgentKey"
+          maxItems: 500
+    AgentKeyCreate:
+      type: object
+      additionalProperties: false
+      required:
+        - label
+        - scopes
+        - currentPassword
+      properties:
+        label:
+          type: string
+          minLength: 1
+          maxLength: 40
+          description: 起个能认出来的名字，例如「Claude Code（MacBook）」
+        scopes:
+          type: array
+          items:
+            $ref: "#/components/schemas/Scope"
+          maxItems: 2
+          minItems: 1
+          uniqueItems: true
+          description: 只给 write 就是只写密钥：能记、能补记，读不到历史
+        expiresInDays:
+          type: integer
+          minimum: 1
+          maximum: 365
+          default: 365
+        currentPassword:
+          type: string
+          minLength: 1
+          maxLength: 128
+          description: 再输一次当前密码，防止被盗的 Cookie 换出长期密钥
+    AgentKeyCreated:
+      type: object
+      additionalProperties: false
+      required:
+        - agentKey
+        - secret
+        - mcpUrl
+      properties:
+        agentKey:
+          $ref: "#/components/schemas/AgentKey"
+        secret:
+          type: string
+          minLength: 50
+          maxLength: 50
+          description: 完整密钥，只在这一次响应里出现，之后再也拿不到
+          pattern: ^nbd_ak_[A-Za-z0-9_-]{43}$
+        mcpUrl:
+          type: string
+          format: uri
+          example: https://nbd.dkz12345.com/mcp
+    ConnectedApp:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - clientId
+        - clientName
+        - clientHost
+        - redirectHost
+        - scopes
+        - createdAt
+        - lastUsedAt
+        - refreshExpiresAt
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: 授权（grant）ID
+        clientId:
+          type: string
+          format: uri
+          description: 客户端元数据文档（CIMD）的地址
+        clientName:
+          type: string
+          minLength: 1
+          maxLength: 200
+          description: 来自客户端元数据文档，不可信，展示时必须转义，并和 clientHost 一起显示
+        clientHost:
+          type: string
+          description: clientId 的域名，例如 claude.ai
+        redirectHost:
+          type: string
+          description: 授权时回调地址的域名
+        scopes:
+          type: array
+          items:
+            $ref: "#/components/schemas/Scope"
+          maxItems: 2
+          minItems: 1
+          uniqueItems: true
+        createdAt:
+          type: string
+          format: date-time
+          description: Instant：UTC ISO 8601，精确到毫秒
+        lastUsedAt:
+          type: string
+          format: date-time
+          description: Instant：UTC ISO 8601，精确到毫秒
+          nullable: true
+        refreshExpiresAt:
+          type: string
+          format: date-time
+          description: 刷新令牌到期时间；过期后要在客户端里重新连接
+          nullable: true
+    ConnectedAppList:
+      type: object
+      additionalProperties: false
+      required:
+        - items
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/ConnectedApp"
+          maxItems: 500
+    AuditEvent:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - at
+        - channel
+        - actor
+        - action
+        - targetType
+        - targetId
+        - status
+        - errorCode
+      properties:
+        id:
+          type: integer
+          minimum: 1
+          maximum: 9007199254740991
+          description: 自增编号，也是游标的依据
+        at:
+          type: string
+          format: date-time
+          description: 开始时间
+        channel:
+          $ref: "#/components/schemas/AuditChannel"
+        actor:
+          $ref: "#/components/schemas/Actor"
+        action:
+          type: string
+          minLength: 1
+          maxLength: 64
+          description: 例如 moment.record、reflection.create、auth.login、agent_key.create
+        targetType:
+          type: string
+          minLength: 1
+          maxLength: 32
+          nullable: true
+        targetId:
+          type: string
+          minLength: 1
+          maxLength: 64
+          nullable: true
+        status:
+          type: string
+          enum:
+            - running
+            - success
+            - error
+        errorCode:
+          type: string
+          minLength: 1
+          maxLength: 64
+          nullable: true
+      description: 审计只记录谁在什么时候做了什么，不记录参数和正文
+    AuditPage:
+      type: object
+      additionalProperties: false
+      required:
+        - items
+        - nextCursor
+        - total
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/AuditEvent"
+          maxItems: 100
+        nextCursor:
+          type: string
+          minLength: 1
+          maxLength: 200
+          nullable: true
+        total:
+          type: integer
+          minimum: 0
+          maximum: 1000000000
+    Meta:
+      type: object
+      additionalProperties: false
+      required:
+        - version
+        - apiVersion
+        - features
+        - limits
+        - review
+        - enums
+      properties:
+        version:
+          type: string
+          description: 服务版本，例如 1.0.0（构建时写入）
+        apiVersion:
+          type: string
+          enum:
+            - v1
+        features:
+          type: object
+          additionalProperties: false
+          required:
+            - attachments
+            - reminders
+            - shareLinks
+            - totp
+            - registration
+            - dcr
+            - reviewScheduling
+          properties:
+            attachments:
+              type: boolean
+              description: 附件（v1 为 false）
+            reminders:
+              type: boolean
+              description: 复盘提醒推送（v1 为 false）
+            shareLinks:
+              type: boolean
+              description: 匿名分享链接（v1 为 false）
+            totp:
+              type: boolean
+              description: 两步验证（v1 为 false）
+            registration:
+              type: boolean
+              description: 开放注册（v1 为 false）
+            dcr:
+              type: boolean
+              description: OAuth 动态客户端注册（v1 为 false）
+            reviewScheduling:
+              type: boolean
+              description: 自动复盘排程；所有者已关闭，手动复盘仍可用
+        limits:
+          type: object
+          additionalProperties: false
+          required:
+            - titleMax
+            - narrativeMax
+            - agentSummaryMax
+            - fearedOutcomeMax
+            - thoughtsMax
+            - bodySignalsMax
+            - immediateResponseMax
+            - peopleMax
+            - personMax
+            - tagsMax
+            - tagMax
+            - emotionsMax
+            - noteMax
+            - whatHappenedMax
+            - perspectiveMax
+            - trapsMax
+            - lessonIdsMax
+            - lessonTitleMax
+            - lessonBodyMax
+            - reasonMax
+            - qMax
+            - pageMax
+            - listCap
+            - snoozeMaxDays
+            - keyLabelMax
+            - keyMaxDays
+            - passwordMin
+            - calendarMaxDays
+          properties:
+            titleMax:
+              type: integer
+              minimum: 0
+              maximum: 1000000
+            narrativeMax:
+              type: integer
+              minimum: 0
+              maximum: 1000000
+            agentSummaryMax:
+              type: integer
+              minimum: 0
+              maximum: 1000000
+            fearedOutcomeMax:
+              type: integer
+              minimum: 0
+              maximum: 1000000
+            thoughtsMax:
+              type: integer
+              minimum: 0
+              maximum: 1000000
+            bodySignalsMax:
+              type: integer
+              minimum: 0
+              maximum: 1000000
+            immediateResponseMax:
+              type: integer
+              minimum: 0
+              maximum: 1000000
+            peopleMax:
+              type: integer
+              minimum: 0
+              maximum: 1000000
+            personMax:
+              type: integer
+              minimum: 0
+              maximum: 1000000
+            tagsMax:
+              type: integer
+              minimum: 0
+              maximum: 1000000
+            tagMax:
+              type: integer
+              minimum: 0
+              maximum: 1000000
+            emotionsMax:
+              type: integer
+              minimum: 0
+              maximum: 1000000
+            noteMax:
+              type: integer
+              minimum: 0
+              maximum: 1000000
+            whatHappenedMax:
+              type: integer
+              minimum: 0
+              maximum: 1000000
+            perspectiveMax:
+              type: integer
+              minimum: 0
+              maximum: 1000000
+            trapsMax:
+              type: integer
+              minimum: 0
+              maximum: 1000000
+            lessonIdsMax:
+              type: integer
+              minimum: 0
+              maximum: 1000000
+            lessonTitleMax:
+              type: integer
+              minimum: 0
+              maximum: 1000000
+            lessonBodyMax:
+              type: integer
+              minimum: 0
+              maximum: 1000000
+            reasonMax:
+              type: integer
+              minimum: 0
+              maximum: 1000000
+            qMax:
+              type: integer
+              minimum: 0
+              maximum: 1000000
+            pageMax:
+              type: integer
+              minimum: 0
+              maximum: 1000000
+            listCap:
+              type: integer
+              minimum: 0
+              maximum: 1000000
+            snoozeMaxDays:
+              type: integer
+              minimum: 0
+              maximum: 1000000
+            keyLabelMax:
+              type: integer
+              minimum: 0
+              maximum: 1000000
+            keyMaxDays:
+              type: integer
+              minimum: 0
+              maximum: 1000000
+            passwordMin:
+              type: integer
+              minimum: 0
+              maximum: 1000000
+            calendarMaxDays:
+              type: integer
+              minimum: 0
+              maximum: 1000000
+        review:
+          type: object
+          additionalProperties: false
+          required:
+            - scheduleDays
+            - freezeHours
+            - trashDays
+            - snoozeMaxDays
+          properties:
+            scheduleDays:
+              type: array
+              items:
+                type: integer
+                minimum: 1
+                maximum: 3650
+              maxItems: 10
+              description: 默认复盘节奏（距记录日的天数）
+            freezeHours:
+              type: integer
+              minimum: 1
+              maximum: 720
+              description: Agent 可更正的小时数
+            trashDays:
+              type: integer
+              minimum: 1
+              maximum: 365
+            snoozeMaxDays:
+              type: integer
+              minimum: 1
+              maximum: 365
+        enums:
+          type: object
+          additionalProperties: false
+          required:
+            - scene
+            - emotion
+            - thinkingTrap
+            - resolution
+            - fearCameTrue
+            - status
+            - precision
+            - scope
+          properties:
+            scene:
+              type: array
+              items:
+                $ref: "#/components/schemas/EnumItem"
+              maxItems: 50
+            emotion:
+              type: array
+              items:
+                $ref: "#/components/schemas/EnumItem"
+              maxItems: 50
+            thinkingTrap:
+              type: array
+              items:
+                $ref: "#/components/schemas/EnumItem"
+              maxItems: 50
+            resolution:
+              type: array
+              items:
+                $ref: "#/components/schemas/EnumItem"
+              maxItems: 50
+            fearCameTrue:
+              type: array
+              items:
+                $ref: "#/components/schemas/EnumItem"
+              maxItems: 50
+            status:
+              type: array
+              items:
+                $ref: "#/components/schemas/EnumItem"
+              maxItems: 50
+            precision:
+              type: array
+              items:
+                $ref: "#/components/schemas/EnumItem"
+              maxItems: 50
+            scope:
+              type: array
+              items:
+                $ref: "#/components/schemas/EnumItem"
+              maxItems: 50
+      description: 前端所有枚举的中文标签只从这里取，不要在前端写死
+    ExportMoment:
+      type: object
+      additionalProperties: false
+      required:
+        - moment
+        - revisions
+      properties:
+        moment:
+          $ref: "#/components/schemas/MomentDetail"
+        revisions:
+          type: array
+          items:
+            $ref: "#/components/schemas/Revision"
+          maxItems: 500
+    ExportDocument:
+      type: object
+      additionalProperties: false
+      required:
+        - format
+        - version
+        - exportedAt
+        - owner
+        - moments
+        - lessons
+        - tags
+      properties:
+        format:
+          type: string
+          enum:
+            - nbd-export
+        version:
+          type: integer
+          enum:
+            - 1
+        exportedAt:
+          type: string
+          format: date-time
+          description: Instant：UTC ISO 8601，精确到毫秒
+        owner:
+          type: object
+          additionalProperties: false
+          required:
+            - username
+            - displayName
+            - timezone
+          properties:
+            username:
+              type: string
+            displayName:
+              type: string
+            timezone:
+              type: string
+        moments:
+          type: array
+          items:
+            $ref: "#/components/schemas/ExportMoment"
+          maxItems: 1000000
+          description: 含回收站里的事件
+        lessons:
+          type: array
+          items:
+            $ref: "#/components/schemas/LessonDetail"
+          maxItems: 1000000
+        tags:
+          type: array
+          items:
+            $ref: "#/components/schemas/Tag"
+          maxItems: 1000000

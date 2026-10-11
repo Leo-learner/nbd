@@ -1,0 +1,11 @@
+node_modules/
+dist/
+.work/
+.env
+!.env.example
+docs/deployment-private/
+.playwright-cli/
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+.DS_Store

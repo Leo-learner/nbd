@@ -1,0 +1,44 @@
+{
+  "summary": "复盘结果：结论是放下了，不再提醒",
+  "operationId": "createReflection",
+  "kind": "response",
+  "status": 201,
+  "schema": "ReflectionResult",
+  "value": {
+    "reflection": {
+      "id": "1c9e5f3a-7b2d-4e81-a6f0-d4b8c2e9a713",
+      "momentId": "9b4f0e21-6d3a-4f8c-8e17-c25a90d3b6e4",
+      "intensityNow": 2,
+      "resolution": "let_go",
+      "severityNow": 1,
+      "fearCameTrue": "no",
+      "whatHappened": "客户第二天回复「收到，附件我在系统里找到了」，还顺手确认了下周的会议。",
+      "perspective": "发错附件是谁都会犯的小错，补发一封说明就结束了，客户根本没当回事。",
+      "thinkingTraps": [
+        "catastrophizing",
+        "fortune_telling"
+      ],
+      "lessonIds": [],
+      "reflectedOn": "2026-10-11",
+      "daysSinceHappened": 3,
+      "author": {
+        "kind": "owner",
+        "id": null,
+        "label": "我"
+      },
+      "createdAt": "2026-10-11T12:30:05.210Z",
+      "updatedAt": "2026-10-11T12:30:05.210Z"
+    },
+    "moment": {
+      "id": "9b4f0e21-6d3a-4f8c-8e17-c25a90d3b6e4",
+      "status": "settled",
+      "nextReviewOn": null
+    },
+    "comparison": {
+      "intensityThen": 7,
+      "intensityNow": 2,
+      "change": -5,
+      "daysSinceHappened": 3
+    }
+  }
+}

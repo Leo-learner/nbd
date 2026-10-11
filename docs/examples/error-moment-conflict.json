@@ -1,0 +1,17 @@
+{
+  "summary": "错误示例：网页编辑时别人（Agent）刚改过",
+  "operationId": "updateMoment",
+  "kind": "error",
+  "status": 409,
+  "schema": "Error",
+  "value": {
+    "error": {
+      "code": "MOMENT_CONFLICT",
+      "message": "这件事刚被修改过，请刷新后再改",
+      "details": {
+        "currentRevision": 3
+      }
+    },
+    "requestId": "req-7f"
+  }
+}

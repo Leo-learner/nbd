@@ -1,0 +1,26 @@
+[Unit]
+Description=NBD web API, MCP and OAuth
+After=network.target
+
+[Service]
+Type=simple
+User=nbd
+Group=nbd
+WorkingDirectory=/opt/apps/nbd/current
+EnvironmentFile=/etc/nbd.env
+ExecStart=/usr/bin/node --max-old-space-size=128 dist/src/server.js
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=30
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/nbd
+RestrictSUIDSGID=true
+MemoryHigh=192M
+MemoryMax=256M
+
+[Install]
+WantedBy=multi-user.target

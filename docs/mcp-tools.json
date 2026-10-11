@@ -1,0 +1,3302 @@
+{
+  "$comment": "NBD MCP 契约草案 v1：期望的 tools/list 与 prompts/list 结果。实现后由测试与真实 tools/list 比对。_meta[\"nbd/scopes\"] 是调用所需的全部作用域；空数组表示任何有效令牌都可见。工具结果统一为 {data}，同时放进 text 与 structuredContent；业务错误返回 isError=true 与 {\"error\":{code,message,details?},\"auditId\"}。",
+  "server": {
+    "name": "nbd",
+    "title": "NBD 没什么大不了",
+    "version": "1.0.0"
+  },
+  "visibility": {
+    "read+write": [
+      "get_context",
+      "record_moment",
+      "add_note",
+      "correct_moment",
+      "list_due_reviews",
+      "search_moments",
+      "get_moment",
+      "list_lessons",
+      "get_insights",
+      "add_reflection",
+      "snooze_review",
+      "create_lesson"
+    ],
+    "write": [
+      "get_context",
+      "record_moment",
+      "add_note",
+      "correct_moment"
+    ],
+    "read": [
+      "get_context",
+      "list_due_reviews",
+      "search_moments",
+      "get_moment",
+      "list_lessons",
+      "get_insights"
+    ]
+  },
+  "tools": [
+    {
+      "name": "get_context",
+      "title": "获取当前上下文",
+      "description": "返回现在的时间、所有者时区下的「今天」、你这个令牌拥有的作用域、所有枚举的中文含义和字段限额。每次对话第一次记录或回看前先调用一次，用它把「昨天晚上」「上周五」换算成日期。令牌有 read 作用域时，还会返回常用标签（新记录尽量复用）和待回看数量。",
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "object",
+            "properties": {
+              "now": {
+                "type": "string",
+                "format": "date-time",
+                "description": "UTC ISO 8601 时间"
+              },
+              "timezone": {
+                "type": "string",
+                "description": "所有者时区，例如 Asia/Shanghai"
+              },
+              "today": {
+                "type": "string",
+                "format": "date",
+                "description": "所有者时区下的今天"
+              },
+              "localTime": {
+                "type": "string",
+                "minLength": 5,
+                "maxLength": 5,
+                "description": "所有者时区下的当前时刻 HH:mm",
+                "pattern": "^\\d{2}:\\d{2}$"
+              },
+              "weekday": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 7,
+                "description": "1=周一 … 7=周日"
+              },
+              "scopes": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "enum": [
+                    "read",
+                    "write"
+                  ],
+                  "description": "read=读取历史，write=记录与补记"
+                },
+                "maxItems": 2
+              },
+              "enums": {
+                "type": "object",
+                "properties": {
+                  "scene": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "key": {
+                          "type": "string"
+                        },
+                        "label": {
+                          "type": "string"
+                        },
+                        "hint": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "key",
+                        "label"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "maxItems": 50
+                  },
+                  "emotion": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "key": {
+                          "type": "string"
+                        },
+                        "label": {
+                          "type": "string"
+                        },
+                        "hint": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "key",
+                        "label"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "maxItems": 50
+                  },
+                  "thinkingTrap": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "key": {
+                          "type": "string"
+                        },
+                        "label": {
+                          "type": "string"
+                        },
+                        "hint": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "key",
+                        "label"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "maxItems": 50
+                  },
+                  "resolution": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "key": {
+                          "type": "string"
+                        },
+                        "label": {
+                          "type": "string"
+                        },
+                        "hint": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "key",
+                        "label"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "maxItems": 50
+                  },
+                  "fearCameTrue": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "key": {
+                          "type": "string"
+                        },
+                        "label": {
+                          "type": "string"
+                        },
+                        "hint": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "key",
+                        "label"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "maxItems": 50
+                  },
+                  "status": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "key": {
+                          "type": "string"
+                        },
+                        "label": {
+                          "type": "string"
+                        },
+                        "hint": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "key",
+                        "label"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "maxItems": 50
+                  },
+                  "precision": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "key": {
+                          "type": "string"
+                        },
+                        "label": {
+                          "type": "string"
+                        },
+                        "hint": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "key",
+                        "label"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "maxItems": 50
+                  },
+                  "scope": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "key": {
+                          "type": "string"
+                        },
+                        "label": {
+                          "type": "string"
+                        },
+                        "hint": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "key",
+                        "label"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "maxItems": 50
+                  }
+                },
+                "required": [
+                  "scene",
+                  "emotion",
+                  "thinkingTrap",
+                  "resolution",
+                  "fearCameTrue",
+                  "status",
+                  "precision",
+                  "scope"
+                ],
+                "additionalProperties": false
+              },
+              "limits": {
+                "type": "object",
+                "properties": {
+                  "titleMax": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 1000000
+                  },
+                  "narrativeMax": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 1000000
+                  },
+                  "agentSummaryMax": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 1000000
+                  },
+                  "fearedOutcomeMax": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 1000000
+                  },
+                  "emotionsMax": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 1000000
+                  },
+                  "tagsMax": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 1000000
+                  },
+                  "tagMax": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 1000000
+                  },
+                  "noteMax": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 1000000
+                  },
+                  "perspectiveMax": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 1000000
+                  }
+                },
+                "required": [
+                  "titleMax",
+                  "narrativeMax",
+                  "agentSummaryMax",
+                  "fearedOutcomeMax",
+                  "emotionsMax",
+                  "tagsMax",
+                  "tagMax",
+                  "noteMax",
+                  "perspectiveMax"
+                ],
+                "additionalProperties": false
+              },
+              "review": {
+                "type": "object",
+                "properties": {
+                  "freezeHours": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 720
+                  },
+                  "scheduleDays": {
+                    "type": "array",
+                    "items": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 3650
+                    },
+                    "maxItems": 10
+                  }
+                },
+                "required": [
+                  "freezeHours",
+                  "scheduleDays"
+                ],
+                "additionalProperties": false
+              },
+              "topTags": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "name": {
+                      "type": "string"
+                    },
+                    "count": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 1000000000
+                    }
+                  },
+                  "required": [
+                    "name",
+                    "count"
+                  ],
+                  "additionalProperties": false
+                },
+                "maxItems": 50,
+                "description": "只在有 read 作用域时出现"
+              },
+              "dueCount": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 1000000000,
+                "description": "只在有 read 作用域时出现"
+              },
+              "webUrl": {
+                "type": "string",
+                "format": "uri"
+              }
+            },
+            "required": [
+              "now",
+              "timezone",
+              "today",
+              "localTime",
+              "weekday",
+              "scopes",
+              "enums",
+              "limits",
+              "review",
+              "webUrl"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "_meta": {
+        "nbd/scopes": []
+      }
+    },
+    {
+      "name": "record_moment",
+      "title": "记下一件事",
+      "description": "把用户刚经历、让他觉得尴尬或很严重的一件事记下来（「当时的我」）。调用前先把要记的标题、场景、情绪和强度复述给用户并得到同意。narrative 必须是用户自己的原话，原样照录；你的概括放 agentSummary。用户没说的不要编造：没给强度就先问，不知道时间就不填 happenedAt（默认现在）。记录后 24 小时内记错了可以用 correct_moment 更正，之后只能用 add_note 补充。",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "clientRequestId": {
+            "type": "string",
+            "minLength": 8,
+            "maxLength": 64,
+            "description": "本次操作的唯一编号（建议 UUID）。每次新操作生成一个，重试同一操作时必须复用同一个",
+            "pattern": "^[A-Za-z0-9_-]{8,64}$"
+          },
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 60,
+            "description": "一句话标题，例如「周会上把新领导的名字叫错了」"
+          },
+          "narrative": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 20000,
+            "description": "用户自己的原话，原样照录：不润色、不总结、不翻译、不改称呼"
+          },
+          "happenedAt": {
+            "type": "string",
+            "minLength": 10,
+            "maxLength": 35,
+            "description": "发生时间。精确时间写带时区偏移的 ISO 时间（如 2026-10-11T21:30:00+08:00）；只知道日期写 YYYY-MM-DD 并配合 happenedAtPrecision=day 或 approx。不填即为现在；晚于现在 10 分钟以上会被拒绝（HAPPENED_AT_IN_FUTURE）",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}(T\\d{2}:\\d{2}(:\\d{2}(\\.\\d{1,3})?)?(Z|[+-]\\d{2}:\\d{2}))?$"
+          },
+          "happenedAtPrecision": {
+            "type": "string",
+            "enum": [
+              "exact",
+              "day",
+              "approx"
+            ],
+            "description": "默认 exact；happenedAt 只有日期时必须是 day 或 approx。exact=精确时间，day=只知道日期，approx=大概"
+          },
+          "scene": {
+            "type": "string",
+            "enum": [
+              "work",
+              "study",
+              "social",
+              "family",
+              "romance",
+              "online",
+              "public",
+              "other"
+            ],
+            "description": "发生在什么场景。work=工作，study=学习，social=社交，family=家庭，romance=感情，online=网络，public=公共场合，other=其他"
+          },
+          "emotions": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "key": {
+                  "type": "string",
+                  "enum": [
+                    "embarrassed",
+                    "ashamed",
+                    "anxious",
+                    "afraid",
+                    "guilty",
+                    "regretful",
+                    "angry",
+                    "aggrieved",
+                    "sad",
+                    "helpless",
+                    "other"
+                  ],
+                  "description": "embarrassed=尴尬，ashamed=丢脸，anxious=焦虑，afraid=害怕，guilty=内疚，regretful=后悔，angry=生气，aggrieved=委屈，sad=难过，helpless=无力，other=其他"
+                },
+                "intensity": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 10,
+                  "description": "可选：这种情绪单独的强度"
+                }
+              },
+              "required": [
+                "key"
+              ],
+              "additionalProperties": false
+            },
+            "maxItems": 5,
+            "description": "当时的情绪，1–5 个，不重复；用户说「丢人」对应 ashamed",
+            "minItems": 1
+          },
+          "intensity": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 10,
+            "description": "当时有多难受，0–10。必须由用户给出，不要替用户估"
+          },
+          "severity": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 10,
+            "description": "可选：当时觉得这件事有多严重，0–10"
+          },
+          "fearedOutcome": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000,
+            "description": "可选：当时担心会发生什么（以后回看时要核对它有没有发生）"
+          },
+          "outcomeKnownBy": {
+            "type": "string",
+            "format": "date",
+            "description": "可选：什么时候能知道担心的事有没有发生，例如面试结果公布日"
+          },
+          "thoughts": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2000,
+            "description": "可选：当时脑子里冒出来的想法"
+          },
+          "bodySignals": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 500,
+            "description": "可选：身体反应"
+          },
+          "immediateResponse": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000,
+            "description": "可选：当下是怎么应对的"
+          },
+          "people": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 20
+            },
+            "maxItems": 10,
+            "description": "可选：涉及的人，只写角色（「新领导」「同桌」），不写真名"
+          },
+          "agentSummary": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 500,
+            "description": "可选：你的一句话概括（与原话分开存）"
+          },
+          "tags": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 20
+            },
+            "maxItems": 10,
+            "description": "可选：标签。先看 get_context 返回的常用标签，尽量复用"
+          }
+        },
+        "required": [
+          "clientRequestId",
+          "title",
+          "narrative",
+          "scene",
+          "emotions",
+          "intensity"
+        ],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "object",
+            "properties": {
+              "moment": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "revision": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 1000000
+                  },
+                  "status": {
+                    "type": "string",
+                    "enum": [
+                      "fresh",
+                      "cooling",
+                      "due",
+                      "reflected",
+                      "settled",
+                      "archived"
+                    ],
+                    "description": "fresh=刚记下，cooling=冷却中，due=该回看，reflected=已回看，settled=已释怀，archived=已归档"
+                  },
+                  "capturedAt": {
+                    "type": "string",
+                    "format": "date-time",
+                    "description": "UTC ISO 8601 时间"
+                  },
+                  "happenedOn": {
+                    "type": "string",
+                    "format": "date",
+                    "description": "YYYY-MM-DD，所有者时区"
+                  },
+                  "editableUntil": {
+                    "type": "string",
+                    "format": "date-time",
+                    "description": "correct_moment 的截止时间"
+                  },
+                  "nextReviewOn": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "format": "date",
+                    "description": "第一次回看的日期"
+                  },
+                  "tags": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "maxItems": 10
+                  },
+                  "webUrl": {
+                    "type": "string",
+                    "format": "uri"
+                  }
+                },
+                "required": [
+                  "id",
+                  "revision",
+                  "status",
+                  "capturedAt",
+                  "happenedOn",
+                  "editableUntil",
+                  "nextReviewOn",
+                  "tags",
+                  "webUrl"
+                ],
+                "additionalProperties": false
+              },
+              "replayed": {
+                "type": "boolean",
+                "description": "true 表示这是对同一次操作的重放，没有重复写入"
+              }
+            },
+            "required": [
+              "moment",
+              "replayed"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "_meta": {
+        "nbd/scopes": [
+          "write"
+        ]
+      }
+    },
+    {
+      "name": "add_note",
+      "title": "补记",
+      "description": "给已经记下的一件事追加补充，例如后来又发生了什么、想起来的细节。补记只追加，原始记录保持不变。只写令牌只能给自己记录的事补记。",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "clientRequestId": {
+            "type": "string",
+            "minLength": 8,
+            "maxLength": 64,
+            "description": "本次操作的唯一编号（建议 UUID）。每次新操作生成一个，重试同一操作时必须复用同一个",
+            "pattern": "^[A-Za-z0-9_-]{8,64}$"
+          },
+          "momentId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "事件 ID"
+          },
+          "body": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 5000,
+            "description": "补充内容，尽量用用户的原话"
+          }
+        },
+        "required": [
+          "clientRequestId",
+          "momentId",
+          "body"
+        ],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "object",
+            "properties": {
+              "note": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "momentId": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "createdAt": {
+                    "type": "string",
+                    "format": "date-time",
+                    "description": "UTC ISO 8601 时间"
+                  }
+                },
+                "required": [
+                  "id",
+                  "momentId",
+                  "createdAt"
+                ],
+                "additionalProperties": false
+              },
+              "replayed": {
+                "type": "boolean",
+                "description": "true 表示这是对同一次操作的重放，没有重复写入"
+              }
+            },
+            "required": [
+              "note",
+              "replayed"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "_meta": {
+        "nbd/scopes": [
+          "write"
+        ]
+      }
+    },
+    {
+      "name": "correct_moment",
+      "title": "更正原始记录",
+      "description": "只在记录后 24 小时内（editableUntil 之前）更正记错的地方，比如时间、场景、听错的字句；每次更正都会保留旧版本。超过期限返回 MOMENT_FROZEN，请改用 add_note。不要用它美化或弱化当时的情绪。expectedRevision 取 record_moment 或 get_moment 返回的 revision。",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "clientRequestId": {
+            "type": "string",
+            "minLength": 8,
+            "maxLength": 64,
+            "description": "本次操作的唯一编号（建议 UUID）。每次新操作生成一个，重试同一操作时必须复用同一个",
+            "pattern": "^[A-Za-z0-9_-]{8,64}$"
+          },
+          "momentId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "事件 ID"
+          },
+          "expectedRevision": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 1000000,
+            "description": "当前修订号，不一致时返回 MOMENT_CONFLICT"
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200,
+            "description": "可选：为什么要更正"
+          },
+          "changes": {
+            "type": "object",
+            "properties": {
+              "title": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 60,
+                "description": "一句话标题，例如「周会上把新领导的名字叫错了」"
+              },
+              "narrative": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 20000,
+                "description": "用户自己的原话，原样照录：不润色、不总结、不翻译、不改称呼"
+              },
+              "happenedAt": {
+                "type": "string",
+                "minLength": 10,
+                "maxLength": 35,
+                "description": "发生时间。精确时间写带时区偏移的 ISO 时间（如 2026-10-11T21:30:00+08:00）；只知道日期写 YYYY-MM-DD 并配合 happenedAtPrecision=day 或 approx。不填即为现在；晚于现在 10 分钟以上会被拒绝（HAPPENED_AT_IN_FUTURE）",
+                "pattern": "^\\d{4}-\\d{2}-\\d{2}(T\\d{2}:\\d{2}(:\\d{2}(\\.\\d{1,3})?)?(Z|[+-]\\d{2}:\\d{2}))?$"
+              },
+              "happenedAtPrecision": {
+                "type": "string",
+                "enum": [
+                  "exact",
+                  "day",
+                  "approx"
+                ],
+                "description": "exact=精确时间，day=只知道日期，approx=大概"
+              },
+              "scene": {
+                "type": "string",
+                "enum": [
+                  "work",
+                  "study",
+                  "social",
+                  "family",
+                  "romance",
+                  "online",
+                  "public",
+                  "other"
+                ],
+                "description": "work=工作，study=学习，social=社交，family=家庭，romance=感情，online=网络，public=公共场合，other=其他"
+              },
+              "emotions": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "key": {
+                      "type": "string",
+                      "enum": [
+                        "embarrassed",
+                        "ashamed",
+                        "anxious",
+                        "afraid",
+                        "guilty",
+                        "regretful",
+                        "angry",
+                        "aggrieved",
+                        "sad",
+                        "helpless",
+                        "other"
+                      ],
+                      "description": "embarrassed=尴尬，ashamed=丢脸，anxious=焦虑，afraid=害怕，guilty=内疚，regretful=后悔，angry=生气，aggrieved=委屈，sad=难过，helpless=无力，other=其他"
+                    },
+                    "intensity": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 10,
+                      "description": "可选：这种情绪单独的强度"
+                    }
+                  },
+                  "required": [
+                    "key"
+                  ],
+                  "additionalProperties": false
+                },
+                "maxItems": 5,
+                "description": "当时的情绪，1–5 个，不重复；用户说「丢人」对应 ashamed",
+                "minItems": 1
+              },
+              "intensity": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 10
+              },
+              "severity": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "minimum": 0,
+                "maximum": 10
+              },
+              "fearedOutcome": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "minLength": 1,
+                "maxLength": 1000
+              },
+              "outcomeKnownBy": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "format": "date",
+                "description": "YYYY-MM-DD，所有者时区"
+              },
+              "thoughts": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "minLength": 1,
+                "maxLength": 2000
+              },
+              "bodySignals": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "minLength": 1,
+                "maxLength": 500
+              },
+              "immediateResponse": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "minLength": 1,
+                "maxLength": 1000
+              },
+              "people": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 20
+                },
+                "maxItems": 10
+              },
+              "agentSummary": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "minLength": 1,
+                "maxLength": 500
+              }
+            },
+            "required": [],
+            "additionalProperties": false,
+            "minProperties": 1,
+            "description": "只放要改的字段；可选字段传 null 表示清空"
+          }
+        },
+        "required": [
+          "clientRequestId",
+          "momentId",
+          "expectedRevision",
+          "changes"
+        ],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "object",
+            "properties": {
+              "momentId": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "revision": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 1000000
+              },
+              "changedFields": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "maxItems": 20
+              },
+              "editableUntil": {
+                "type": "string",
+                "format": "date-time",
+                "description": "UTC ISO 8601 时间"
+              },
+              "replayed": {
+                "type": "boolean",
+                "description": "true 表示这是对同一次操作的重放，没有重复写入"
+              }
+            },
+            "required": [
+              "momentId",
+              "revision",
+              "changedFields",
+              "editableUntil",
+              "replayed"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": true,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "_meta": {
+        "nbd/scopes": [
+          "write"
+        ]
+      }
+    },
+    {
+      "name": "list_due_reviews",
+      "title": "查看该回看的事",
+      "description": "自动回看排程已关闭；此兼容入口返回空列表。可通过 search_moments 和 get_moment 选择手动回看的记录。",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "upcomingDays": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 30,
+            "description": "同时列出未来几天内将到期的，默认 0",
+            "default": 0
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 20,
+            "description": "默认 10",
+            "default": 10
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "object",
+            "properties": {
+              "items": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "moment": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string",
+                          "format": "uuid"
+                        },
+                        "title": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 60
+                        },
+                        "excerpt": {
+                          "type": "string",
+                          "minLength": 0,
+                          "maxLength": 120
+                        },
+                        "happenedOn": {
+                          "type": "string",
+                          "format": "date",
+                          "description": "YYYY-MM-DD，所有者时区"
+                        },
+                        "happenedAtPrecision": {
+                          "type": "string",
+                          "enum": [
+                            "exact",
+                            "day",
+                            "approx"
+                          ],
+                          "description": "exact=精确时间，day=只知道日期，approx=大概"
+                        },
+                        "scene": {
+                          "type": "string",
+                          "enum": [
+                            "work",
+                            "study",
+                            "social",
+                            "family",
+                            "romance",
+                            "online",
+                            "public",
+                            "other"
+                          ],
+                          "description": "work=工作，study=学习，social=社交，family=家庭，romance=感情，online=网络，public=公共场合，other=其他"
+                        },
+                        "emotions": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "key": {
+                                "type": "string",
+                                "enum": [
+                                  "embarrassed",
+                                  "ashamed",
+                                  "anxious",
+                                  "afraid",
+                                  "guilty",
+                                  "regretful",
+                                  "angry",
+                                  "aggrieved",
+                                  "sad",
+                                  "helpless",
+                                  "other"
+                                ],
+                                "description": "embarrassed=尴尬，ashamed=丢脸，anxious=焦虑，afraid=害怕，guilty=内疚，regretful=后悔，angry=生气，aggrieved=委屈，sad=难过，helpless=无力，other=其他"
+                              },
+                              "intensity": {
+                                "type": [
+                                  "integer",
+                                  "null"
+                                ],
+                                "minimum": 0,
+                                "maximum": 10
+                              }
+                            },
+                            "required": [
+                              "key",
+                              "intensity"
+                            ],
+                            "additionalProperties": false
+                          },
+                          "maxItems": 5
+                        },
+                        "intensity": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 10,
+                          "description": "当时的强度"
+                        },
+                        "severity": {
+                          "type": [
+                            "integer",
+                            "null"
+                          ],
+                          "minimum": 0,
+                          "maximum": 10
+                        },
+                        "fearedOutcome": {
+                          "type": [
+                            "string",
+                            "null"
+                          ],
+                          "minLength": 1,
+                          "maxLength": 1000
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "title",
+                        "excerpt",
+                        "happenedOn",
+                        "happenedAtPrecision",
+                        "scene",
+                        "emotions",
+                        "intensity",
+                        "severity",
+                        "fearedOutcome"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "dueOn": {
+                      "type": "string",
+                      "format": "date",
+                      "description": "该回看的日期"
+                    },
+                    "overdueDays": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 100000
+                    },
+                    "step": {
+                      "type": "object",
+                      "properties": {
+                        "index": {
+                          "type": "integer",
+                          "minimum": 1,
+                          "maximum": 100
+                        },
+                        "total": {
+                          "type": "integer",
+                          "minimum": 1,
+                          "maximum": 100
+                        }
+                      },
+                      "required": [
+                        "index",
+                        "total"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "lastReflection": {
+                      "type": [
+                        "object",
+                        "null"
+                      ],
+                      "properties": {
+                        "createdAt": {
+                          "type": "string",
+                          "format": "date-time",
+                          "description": "UTC ISO 8601 时间"
+                        },
+                        "intensityNow": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 10
+                        },
+                        "resolution": {
+                          "type": "string",
+                          "enum": [
+                            "let_go",
+                            "easing",
+                            "still_matters"
+                          ],
+                          "description": "let_go=放下了，easing=好多了，still_matters=还在意"
+                        }
+                      },
+                      "required": [
+                        "createdAt",
+                        "intensityNow",
+                        "resolution"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": [
+                    "moment",
+                    "dueOn",
+                    "overdueDays",
+                    "step",
+                    "lastReflection"
+                  ],
+                  "additionalProperties": false
+                },
+                "maxItems": 20
+              },
+              "dueCount": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 1000000000
+              },
+              "upcoming": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "moment": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string",
+                          "format": "uuid"
+                        },
+                        "title": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 60
+                        },
+                        "excerpt": {
+                          "type": "string",
+                          "minLength": 0,
+                          "maxLength": 120
+                        },
+                        "happenedOn": {
+                          "type": "string",
+                          "format": "date",
+                          "description": "YYYY-MM-DD，所有者时区"
+                        },
+                        "happenedAtPrecision": {
+                          "type": "string",
+                          "enum": [
+                            "exact",
+                            "day",
+                            "approx"
+                          ],
+                          "description": "exact=精确时间，day=只知道日期，approx=大概"
+                        },
+                        "scene": {
+                          "type": "string",
+                          "enum": [
+                            "work",
+                            "study",
+                            "social",
+                            "family",
+                            "romance",
+                            "online",
+                            "public",
+                            "other"
+                          ],
+                          "description": "work=工作，study=学习，social=社交，family=家庭，romance=感情，online=网络，public=公共场合，other=其他"
+                        },
+                        "emotions": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "key": {
+                                "type": "string",
+                                "enum": [
+                                  "embarrassed",
+                                  "ashamed",
+                                  "anxious",
+                                  "afraid",
+                                  "guilty",
+                                  "regretful",
+                                  "angry",
+                                  "aggrieved",
+                                  "sad",
+                                  "helpless",
+                                  "other"
+                                ],
+                                "description": "embarrassed=尴尬，ashamed=丢脸，anxious=焦虑，afraid=害怕，guilty=内疚，regretful=后悔，angry=生气，aggrieved=委屈，sad=难过，helpless=无力，other=其他"
+                              },
+                              "intensity": {
+                                "type": [
+                                  "integer",
+                                  "null"
+                                ],
+                                "minimum": 0,
+                                "maximum": 10
+                              }
+                            },
+                            "required": [
+                              "key",
+                              "intensity"
+                            ],
+                            "additionalProperties": false
+                          },
+                          "maxItems": 5
+                        },
+                        "intensity": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 10,
+                          "description": "当时的强度"
+                        },
+                        "severity": {
+                          "type": [
+                            "integer",
+                            "null"
+                          ],
+                          "minimum": 0,
+                          "maximum": 10
+                        },
+                        "fearedOutcome": {
+                          "type": [
+                            "string",
+                            "null"
+                          ],
+                          "minLength": 1,
+                          "maxLength": 1000
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "title",
+                        "excerpt",
+                        "happenedOn",
+                        "happenedAtPrecision",
+                        "scene",
+                        "emotions",
+                        "intensity",
+                        "severity",
+                        "fearedOutcome"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "dueOn": {
+                      "type": "string",
+                      "format": "date",
+                      "description": "该回看的日期"
+                    },
+                    "overdueDays": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 100000
+                    },
+                    "step": {
+                      "type": "object",
+                      "properties": {
+                        "index": {
+                          "type": "integer",
+                          "minimum": 1,
+                          "maximum": 100
+                        },
+                        "total": {
+                          "type": "integer",
+                          "minimum": 1,
+                          "maximum": 100
+                        }
+                      },
+                      "required": [
+                        "index",
+                        "total"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "lastReflection": {
+                      "type": [
+                        "object",
+                        "null"
+                      ],
+                      "properties": {
+                        "createdAt": {
+                          "type": "string",
+                          "format": "date-time",
+                          "description": "UTC ISO 8601 时间"
+                        },
+                        "intensityNow": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 10
+                        },
+                        "resolution": {
+                          "type": "string",
+                          "enum": [
+                            "let_go",
+                            "easing",
+                            "still_matters"
+                          ],
+                          "description": "let_go=放下了，easing=好多了，still_matters=还在意"
+                        }
+                      },
+                      "required": [
+                        "createdAt",
+                        "intensityNow",
+                        "resolution"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": [
+                    "moment",
+                    "dueOn",
+                    "overdueDays",
+                    "step",
+                    "lastReflection"
+                  ],
+                  "additionalProperties": false
+                },
+                "maxItems": 20
+              }
+            },
+            "required": [
+              "items",
+              "dueCount",
+              "upcoming"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "_meta": {
+        "nbd/scopes": [
+          "read"
+        ]
+      }
+    },
+    {
+      "name": "search_moments",
+      "title": "搜索记录",
+      "description": "按关键词和条件查找记录过的事，返回摘要；要看全文再调用 get_moment。关键词按字面匹配，多个词用空格分开表示同时包含。",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "q": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100,
+            "description": "关键词"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "fresh",
+              "cooling",
+              "due",
+              "reflected",
+              "settled",
+              "archived"
+            ],
+            "description": "fresh=刚记下，cooling=冷却中，due=该回看，reflected=已回看，settled=已释怀，archived=已归档"
+          },
+          "scene": {
+            "type": "string",
+            "enum": [
+              "work",
+              "study",
+              "social",
+              "family",
+              "romance",
+              "online",
+              "public",
+              "other"
+            ],
+            "description": "work=工作，study=学习，social=社交，family=家庭，romance=感情，online=网络，public=公共场合，other=其他"
+          },
+          "emotion": {
+            "type": "string",
+            "enum": [
+              "embarrassed",
+              "ashamed",
+              "anxious",
+              "afraid",
+              "guilty",
+              "regretful",
+              "angry",
+              "aggrieved",
+              "sad",
+              "helpless",
+              "other"
+            ],
+            "description": "embarrassed=尴尬，ashamed=丢脸，anxious=焦虑，afraid=害怕，guilty=内疚，regretful=后悔，angry=生气，aggrieved=委屈，sad=难过，helpless=无力，other=其他"
+          },
+          "tag": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 20
+          },
+          "trap": {
+            "type": "string",
+            "enum": [
+              "spotlight",
+              "catastrophizing",
+              "mind_reading",
+              "fortune_telling",
+              "overgeneralizing",
+              "personalizing",
+              "all_or_nothing",
+              "should"
+            ],
+            "description": "spotlight=聚光灯效应，catastrophizing=灾难化，mind_reading=读心术，fortune_telling=预言未来，overgeneralizing=以偏概全，personalizing=个人化，all_or_nothing=非黑即白，should=应该思维"
+          },
+          "resolution": {
+            "type": "string",
+            "enum": [
+              "let_go",
+              "easing",
+              "still_matters"
+            ],
+            "description": "let_go=放下了，easing=好多了，still_matters=还在意"
+          },
+          "from": {
+            "type": "string",
+            "format": "date",
+            "description": "按发生日期过滤（含）"
+          },
+          "to": {
+            "type": "string",
+            "format": "date",
+            "description": "按发生日期过滤（含）"
+          },
+          "sort": {
+            "type": "string",
+            "enum": [
+              "happened_desc",
+              "happened_asc",
+              "captured_desc",
+              "intensity_desc"
+            ],
+            "description": "happened_desc=发生时间从新到旧，happened_asc=发生时间从旧到新，captured_desc=记录时间从新到旧，intensity_desc=当时强度从高到低",
+            "default": "happened_desc"
+          },
+          "cursor": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200,
+            "description": "上一页返回的 nextCursor"
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 20,
+            "description": "默认 10",
+            "default": 10
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "object",
+            "properties": {
+              "items": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "title": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 60
+                    },
+                    "excerpt": {
+                      "type": "string",
+                      "minLength": 0,
+                      "maxLength": 120
+                    },
+                    "happenedOn": {
+                      "type": "string",
+                      "format": "date",
+                      "description": "YYYY-MM-DD，所有者时区"
+                    },
+                    "happenedAtPrecision": {
+                      "type": "string",
+                      "enum": [
+                        "exact",
+                        "day",
+                        "approx"
+                      ],
+                      "description": "exact=精确时间，day=只知道日期，approx=大概"
+                    },
+                    "scene": {
+                      "type": "string",
+                      "enum": [
+                        "work",
+                        "study",
+                        "social",
+                        "family",
+                        "romance",
+                        "online",
+                        "public",
+                        "other"
+                      ],
+                      "description": "work=工作，study=学习，social=社交，family=家庭，romance=感情，online=网络，public=公共场合，other=其他"
+                    },
+                    "emotions": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "key": {
+                            "type": "string",
+                            "enum": [
+                              "embarrassed",
+                              "ashamed",
+                              "anxious",
+                              "afraid",
+                              "guilty",
+                              "regretful",
+                              "angry",
+                              "aggrieved",
+                              "sad",
+                              "helpless",
+                              "other"
+                            ],
+                            "description": "embarrassed=尴尬，ashamed=丢脸，anxious=焦虑，afraid=害怕，guilty=内疚，regretful=后悔，angry=生气，aggrieved=委屈，sad=难过，helpless=无力，other=其他"
+                          },
+                          "intensity": {
+                            "type": [
+                              "integer",
+                              "null"
+                            ],
+                            "minimum": 0,
+                            "maximum": 10
+                          }
+                        },
+                        "required": [
+                          "key",
+                          "intensity"
+                        ],
+                        "additionalProperties": false
+                      },
+                      "maxItems": 5
+                    },
+                    "intensity": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 10,
+                      "description": "当时的强度"
+                    },
+                    "latestIntensityNow": {
+                      "type": [
+                        "integer",
+                        "null"
+                      ],
+                      "minimum": 0,
+                      "maximum": 10,
+                      "description": "最近一次复盘的强度"
+                    },
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "fresh",
+                        "cooling",
+                        "due",
+                        "reflected",
+                        "settled",
+                        "archived"
+                      ],
+                      "description": "fresh=刚记下，cooling=冷却中，due=该回看，reflected=已回看，settled=已释怀，archived=已归档"
+                    },
+                    "nextReviewOn": {
+                      "type": [
+                        "string",
+                        "null"
+                      ],
+                      "format": "date",
+                      "description": "YYYY-MM-DD，所有者时区"
+                    },
+                    "tags": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      },
+                      "maxItems": 10
+                    },
+                    "reflectionCount": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 100000
+                    },
+                    "matchSnippet": {
+                      "type": "string",
+                      "minLength": 0,
+                      "maxLength": 200,
+                      "description": "只在带 q 时出现"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "title",
+                    "excerpt",
+                    "happenedOn",
+                    "happenedAtPrecision",
+                    "scene",
+                    "emotions",
+                    "intensity",
+                    "latestIntensityNow",
+                    "status",
+                    "nextReviewOn",
+                    "tags",
+                    "reflectionCount"
+                  ],
+                  "additionalProperties": false
+                },
+                "maxItems": 20
+              },
+              "nextCursor": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "minLength": 1,
+                "maxLength": 200
+              },
+              "total": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 1000000000
+              }
+            },
+            "required": [
+              "items",
+              "nextCursor",
+              "total"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "_meta": {
+        "nbd/scopes": [
+          "read"
+        ]
+      }
+    },
+    {
+      "name": "get_moment",
+      "title": "查看一件事",
+      "description": "读取一件事的完整内容：当时的原话和情绪、补记、历次复盘和关联的经验。回看时先把「当时的你」展示给用户，再问现在的感受。",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "momentId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "事件 ID"
+          }
+        },
+        "required": [
+          "momentId"
+        ],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "object",
+            "properties": {
+              "moment": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "revision": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 1000000
+                  },
+                  "title": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 60
+                  },
+                  "narrative": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 20000,
+                    "description": "用户当时的原话"
+                  },
+                  "agentSummary": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "minLength": 1,
+                    "maxLength": 500
+                  },
+                  "happenedAt": {
+                    "type": "string",
+                    "format": "date-time",
+                    "description": "UTC ISO 8601 时间"
+                  },
+                  "happenedOn": {
+                    "type": "string",
+                    "format": "date",
+                    "description": "YYYY-MM-DD，所有者时区"
+                  },
+                  "happenedAtPrecision": {
+                    "type": "string",
+                    "enum": [
+                      "exact",
+                      "day",
+                      "approx"
+                    ],
+                    "description": "exact=精确时间，day=只知道日期，approx=大概"
+                  },
+                  "capturedAt": {
+                    "type": "string",
+                    "format": "date-time",
+                    "description": "UTC ISO 8601 时间"
+                  },
+                  "editableUntil": {
+                    "type": "string",
+                    "format": "date-time",
+                    "description": "correct_moment 的截止时间"
+                  },
+                  "scene": {
+                    "type": "string",
+                    "enum": [
+                      "work",
+                      "study",
+                      "social",
+                      "family",
+                      "romance",
+                      "online",
+                      "public",
+                      "other"
+                    ],
+                    "description": "work=工作，study=学习，social=社交，family=家庭，romance=感情，online=网络，public=公共场合，other=其他"
+                  },
+                  "emotions": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "key": {
+                          "type": "string",
+                          "enum": [
+                            "embarrassed",
+                            "ashamed",
+                            "anxious",
+                            "afraid",
+                            "guilty",
+                            "regretful",
+                            "angry",
+                            "aggrieved",
+                            "sad",
+                            "helpless",
+                            "other"
+                          ],
+                          "description": "embarrassed=尴尬，ashamed=丢脸，anxious=焦虑，afraid=害怕，guilty=内疚，regretful=后悔，angry=生气，aggrieved=委屈，sad=难过，helpless=无力，other=其他"
+                        },
+                        "intensity": {
+                          "type": [
+                            "integer",
+                            "null"
+                          ],
+                          "minimum": 0,
+                          "maximum": 10
+                        }
+                      },
+                      "required": [
+                        "key",
+                        "intensity"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "maxItems": 5
+                  },
+                  "intensity": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 10,
+                    "description": "当时的强度"
+                  },
+                  "severity": {
+                    "type": [
+                      "integer",
+                      "null"
+                    ],
+                    "minimum": 0,
+                    "maximum": 10
+                  },
+                  "fearedOutcome": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "minLength": 1,
+                    "maxLength": 1000
+                  },
+                  "outcomeKnownBy": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "format": "date",
+                    "description": "YYYY-MM-DD，所有者时区"
+                  },
+                  "thoughts": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "minLength": 1,
+                    "maxLength": 2000
+                  },
+                  "bodySignals": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "minLength": 1,
+                    "maxLength": 500
+                  },
+                  "immediateResponse": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "minLength": 1,
+                    "maxLength": 1000
+                  },
+                  "people": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "maxItems": 10
+                  },
+                  "tags": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "maxItems": 10
+                  },
+                  "status": {
+                    "type": "string",
+                    "enum": [
+                      "fresh",
+                      "cooling",
+                      "due",
+                      "reflected",
+                      "settled",
+                      "archived"
+                    ],
+                    "description": "fresh=刚记下，cooling=冷却中，due=该回看，reflected=已回看，settled=已释怀，archived=已归档"
+                  },
+                  "nextReviewOn": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "format": "date",
+                    "description": "YYYY-MM-DD，所有者时区"
+                  },
+                  "snoozedUntil": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "format": "date",
+                    "description": "YYYY-MM-DD，所有者时区"
+                  },
+                  "revisionCount": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 100000
+                  },
+                  "notes": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string",
+                          "format": "uuid"
+                        },
+                        "body": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 5000
+                        },
+                        "createdAt": {
+                          "type": "string",
+                          "format": "date-time",
+                          "description": "UTC ISO 8601 时间"
+                        },
+                        "authorLabel": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "body",
+                        "createdAt",
+                        "authorLabel"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "maxItems": 500
+                  },
+                  "reflections": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string",
+                          "format": "uuid"
+                        },
+                        "createdAt": {
+                          "type": "string",
+                          "format": "date-time",
+                          "description": "UTC ISO 8601 时间"
+                        },
+                        "intensityNow": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 10
+                        },
+                        "severityNow": {
+                          "type": [
+                            "integer",
+                            "null"
+                          ],
+                          "minimum": 0,
+                          "maximum": 10
+                        },
+                        "fearCameTrue": {
+                          "type": [
+                            "string",
+                            "null"
+                          ],
+                          "enum": [
+                            "no",
+                            "partly",
+                            "yes",
+                            "unknown",
+                            null
+                          ],
+                          "description": "no=没发生，partly=部分发生，yes=发生了，unknown=还不知道"
+                        },
+                        "whatHappened": {
+                          "type": [
+                            "string",
+                            "null"
+                          ],
+                          "minLength": 1,
+                          "maxLength": 2000
+                        },
+                        "perspective": {
+                          "type": [
+                            "string",
+                            "null"
+                          ],
+                          "minLength": 1,
+                          "maxLength": 5000
+                        },
+                        "thinkingTraps": {
+                          "type": "array",
+                          "items": {
+                            "type": "string",
+                            "enum": [
+                              "spotlight",
+                              "catastrophizing",
+                              "mind_reading",
+                              "fortune_telling",
+                              "overgeneralizing",
+                              "personalizing",
+                              "all_or_nothing",
+                              "should"
+                            ],
+                            "description": "spotlight=聚光灯效应，catastrophizing=灾难化，mind_reading=读心术，fortune_telling=预言未来，overgeneralizing=以偏概全，personalizing=个人化，all_or_nothing=非黑即白，should=应该思维"
+                          },
+                          "maxItems": 5
+                        },
+                        "resolution": {
+                          "type": "string",
+                          "enum": [
+                            "let_go",
+                            "easing",
+                            "still_matters"
+                          ],
+                          "description": "let_go=放下了，easing=好多了，still_matters=还在意"
+                        },
+                        "daysSinceHappened": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 100000
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "createdAt",
+                        "intensityNow",
+                        "severityNow",
+                        "fearCameTrue",
+                        "whatHappened",
+                        "perspective",
+                        "thinkingTraps",
+                        "resolution",
+                        "daysSinceHappened"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "maxItems": 500,
+                    "description": "按时间从旧到新"
+                  },
+                  "lessons": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string",
+                          "format": "uuid"
+                        },
+                        "title": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 80
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "title"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "maxItems": 500
+                  },
+                  "webUrl": {
+                    "type": "string",
+                    "format": "uri"
+                  }
+                },
+                "required": [
+                  "id",
+                  "revision",
+                  "title",
+                  "narrative",
+                  "agentSummary",
+                  "happenedAt",
+                  "happenedOn",
+                  "happenedAtPrecision",
+                  "capturedAt",
+                  "editableUntil",
+                  "scene",
+                  "emotions",
+                  "intensity",
+                  "severity",
+                  "fearedOutcome",
+                  "outcomeKnownBy",
+                  "thoughts",
+                  "bodySignals",
+                  "immediateResponse",
+                  "people",
+                  "tags",
+                  "status",
+                  "nextReviewOn",
+                  "snoozedUntil",
+                  "revisionCount",
+                  "notes",
+                  "reflections",
+                  "lessons",
+                  "webUrl"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "moment"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "_meta": {
+        "nbd/scopes": [
+          "read"
+        ]
+      }
+    },
+    {
+      "name": "list_lessons",
+      "title": "查看经验库",
+      "description": "列出用户已经积累的经验。写复盘时如果某条经验适用，用它的 id 填 add_reflection 的 lessonIds，不要重复新建。",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "q": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100,
+            "description": "按标题和正文过滤"
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 50,
+            "description": "默认 20",
+            "default": 20
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "object",
+            "properties": {
+              "items": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "title": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 80
+                    },
+                    "body": {
+                      "type": "string",
+                      "minLength": 0,
+                      "maxLength": 5000
+                    },
+                    "momentCount": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 1000000000
+                    },
+                    "createdAt": {
+                      "type": "string",
+                      "format": "date-time",
+                      "description": "UTC ISO 8601 时间"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "title",
+                    "body",
+                    "momentCount",
+                    "createdAt"
+                  ],
+                  "additionalProperties": false
+                },
+                "maxItems": 50
+              },
+              "total": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 1000000000
+              }
+            },
+            "required": [
+              "items",
+              "total"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "_meta": {
+        "nbd/scopes": [
+          "read"
+        ]
+      }
+    },
+    {
+      "name": "get_insights",
+      "title": "查看规律",
+      "description": "汇总统计：担心的事有多少没发生、情绪强度平均降了多少、多久能放下、常见的情绪/场景/思维陷阱。样本数低于 minSample 时只描述数字，不要下结论。",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "from": {
+            "type": "string",
+            "format": "date",
+            "description": "按发生日期过滤（含）"
+          },
+          "to": {
+            "type": "string",
+            "format": "date",
+            "description": "按发生日期过滤（含）"
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "object",
+            "properties": {
+              "overview": {
+                "type": "object",
+                "properties": {
+                  "range": {
+                    "type": "object",
+                    "properties": {
+                      "from": {
+                        "type": [
+                          "string",
+                          "null"
+                        ],
+                        "format": "date",
+                        "description": "YYYY-MM-DD，所有者时区"
+                      },
+                      "to": {
+                        "type": [
+                          "string",
+                          "null"
+                        ],
+                        "format": "date",
+                        "description": "YYYY-MM-DD，所有者时区"
+                      }
+                    },
+                    "required": [
+                      "from",
+                      "to"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "minSample": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 100,
+                    "description": "样本数低于它时不要下结论"
+                  },
+                  "totals": {
+                    "type": "object",
+                    "properties": {
+                      "moments": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 1000000000
+                      },
+                      "reflected": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 1000000000
+                      },
+                      "settled": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 1000000000
+                      },
+                      "archived": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 1000000000
+                      }
+                    },
+                    "required": [
+                      "moments",
+                      "reflected",
+                      "settled",
+                      "archived"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "fear": {
+                    "type": "object",
+                    "properties": {
+                      "withFear": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 1000000000
+                      },
+                      "judged": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 1000000000
+                      },
+                      "no": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 1000000000
+                      },
+                      "partly": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 1000000000
+                      },
+                      "yes": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 1000000000
+                      },
+                      "unknown": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 1000000000
+                      },
+                      "pending": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 1000000000
+                      },
+                      "neverHappenedRate": {
+                        "type": [
+                          "number",
+                          "null"
+                        ],
+                        "minimum": 0,
+                        "maximum": 1
+                      }
+                    },
+                    "required": [
+                      "withFear",
+                      "judged",
+                      "no",
+                      "partly",
+                      "yes",
+                      "unknown",
+                      "pending",
+                      "neverHappenedRate"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "intensity": {
+                    "type": "object",
+                    "properties": {
+                      "pairs": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 1000000000
+                      },
+                      "meanThen": {
+                        "type": [
+                          "number",
+                          "null"
+                        ],
+                        "minimum": 0,
+                        "maximum": 10
+                      },
+                      "meanNow": {
+                        "type": [
+                          "number",
+                          "null"
+                        ],
+                        "minimum": 0,
+                        "maximum": 10
+                      },
+                      "meanDrop": {
+                        "type": [
+                          "number",
+                          "null"
+                        ],
+                        "minimum": -10,
+                        "maximum": 10
+                      }
+                    },
+                    "required": [
+                      "pairs",
+                      "meanThen",
+                      "meanNow",
+                      "meanDrop"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "letGo": {
+                    "type": "object",
+                    "properties": {
+                      "count": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 1000000000
+                      },
+                      "medianDays": {
+                        "type": [
+                          "number",
+                          "null"
+                        ],
+                        "minimum": 0,
+                        "maximum": 100000
+                      }
+                    },
+                    "required": [
+                      "count",
+                      "medianDays"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "distributions": {
+                    "type": "object",
+                    "properties": {
+                      "emotions": {
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "key": {
+                              "type": "string"
+                            },
+                            "count": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 1000000000
+                            }
+                          },
+                          "required": [
+                            "key",
+                            "count"
+                          ],
+                          "additionalProperties": false
+                        },
+                        "maxItems": 20
+                      },
+                      "scenes": {
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "key": {
+                              "type": "string"
+                            },
+                            "count": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 1000000000
+                            }
+                          },
+                          "required": [
+                            "key",
+                            "count"
+                          ],
+                          "additionalProperties": false
+                        },
+                        "maxItems": 20
+                      },
+                      "thinkingTraps": {
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "key": {
+                              "type": "string"
+                            },
+                            "count": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 1000000000
+                            }
+                          },
+                          "required": [
+                            "key",
+                            "count"
+                          ],
+                          "additionalProperties": false
+                        },
+                        "maxItems": 20
+                      },
+                      "resolutions": {
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "key": {
+                              "type": "string"
+                            },
+                            "count": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 1000000000
+                            }
+                          },
+                          "required": [
+                            "key",
+                            "count"
+                          ],
+                          "additionalProperties": false
+                        },
+                        "maxItems": 20
+                      }
+                    },
+                    "required": [
+                      "emotions",
+                      "scenes",
+                      "thinkingTraps",
+                      "resolutions"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "required": [
+                  "range",
+                  "minSample",
+                  "totals",
+                  "fear",
+                  "intensity",
+                  "letGo",
+                  "distributions"
+                ],
+                "additionalProperties": false
+              },
+              "decay": {
+                "type": "object",
+                "properties": {
+                  "buckets": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "key": {
+                          "type": "string",
+                          "enum": [
+                            "d0_1",
+                            "d2_7",
+                            "d8_30",
+                            "d31_90",
+                            "d91p"
+                          ]
+                        },
+                        "label": {
+                          "type": "string"
+                        },
+                        "n": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 1000000000
+                        },
+                        "meanIntensity": {
+                          "type": [
+                            "number",
+                            "null"
+                          ],
+                          "minimum": 0,
+                          "maximum": 10
+                        },
+                        "medianIntensity": {
+                          "type": [
+                            "number",
+                            "null"
+                          ],
+                          "minimum": 0,
+                          "maximum": 10
+                        }
+                      },
+                      "required": [
+                        "key",
+                        "label",
+                        "n",
+                        "meanIntensity",
+                        "medianIntensity"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "maxItems": 5
+                  }
+                },
+                "required": [
+                  "buckets"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "overview",
+              "decay"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "_meta": {
+        "nbd/scopes": [
+          "read"
+        ]
+      }
+    },
+    {
+      "name": "add_reflection",
+      "title": "写一次回看",
+      "description": "记录用户现在怎么看一件过去的事（「后来的我」）。先用 get_moment 把当时的原话和强度给用户看，再问现在有多难受、担心的事有没有发生、现在怎么看。resolution 由用户自己选，不要替用户下结论。",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "clientRequestId": {
+            "type": "string",
+            "minLength": 8,
+            "maxLength": 64,
+            "description": "本次操作的唯一编号（建议 UUID）。每次新操作生成一个，重试同一操作时必须复用同一个",
+            "pattern": "^[A-Za-z0-9_-]{8,64}$"
+          },
+          "momentId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "事件 ID"
+          },
+          "intensityNow": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 10,
+            "description": "现在想起来有多难受，0–10，由用户给出"
+          },
+          "resolution": {
+            "type": "string",
+            "enum": [
+              "let_go",
+              "easing",
+              "still_matters"
+            ],
+            "description": "用户自己的结论。let_go=放下了，easing=好多了，still_matters=还在意"
+          },
+          "severityNow": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 10,
+            "description": "可选：现在觉得有多严重"
+          },
+          "fearCameTrue": {
+            "type": "string",
+            "enum": [
+              "no",
+              "partly",
+              "yes",
+              "unknown"
+            ],
+            "description": "可选：当时担心的事有没有发生。no=没发生，partly=部分发生，yes=发生了，unknown=还不知道"
+          },
+          "whatHappened": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2000,
+            "description": "可选：后来实际发生了什么"
+          },
+          "perspective": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 5000,
+            "description": "可选：现在怎么看，尽量用用户的话"
+          },
+          "thinkingTraps": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "spotlight",
+                "catastrophizing",
+                "mind_reading",
+                "fortune_telling",
+                "overgeneralizing",
+                "personalizing",
+                "all_or_nothing",
+                "should"
+              ],
+              "description": "spotlight=聚光灯效应，catastrophizing=灾难化，mind_reading=读心术，fortune_telling=预言未来，overgeneralizing=以偏概全，personalizing=个人化，all_or_nothing=非黑即白，should=应该思维"
+            },
+            "maxItems": 5,
+            "description": "可选：用户认同的思维陷阱",
+            "uniqueItems": true
+          },
+          "lessonIds": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "maxItems": 10,
+            "description": "可选：关联已有经验",
+            "uniqueItems": true
+          }
+        },
+        "required": [
+          "clientRequestId",
+          "momentId",
+          "intensityNow",
+          "resolution"
+        ],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "object",
+            "properties": {
+              "reflection": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "createdAt": {
+                    "type": "string",
+                    "format": "date-time",
+                    "description": "UTC ISO 8601 时间"
+                  }
+                },
+                "required": [
+                  "id",
+                  "createdAt"
+                ],
+                "additionalProperties": false
+              },
+              "comparison": {
+                "type": "object",
+                "properties": {
+                  "intensityThen": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 10
+                  },
+                  "intensityNow": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 10
+                  },
+                  "change": {
+                    "type": "integer",
+                    "minimum": -10,
+                    "maximum": 10,
+                    "description": "现在减当时"
+                  },
+                  "daysSinceHappened": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 100000
+                  }
+                },
+                "required": [
+                  "intensityThen",
+                  "intensityNow",
+                  "change",
+                  "daysSinceHappened"
+                ],
+                "additionalProperties": false
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "fresh",
+                  "cooling",
+                  "due",
+                  "reflected",
+                  "settled",
+                  "archived"
+                ],
+                "description": "fresh=刚记下，cooling=冷却中，due=该回看，reflected=已回看，settled=已释怀，archived=已归档"
+              },
+              "nextReviewOn": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "format": "date",
+                "description": "YYYY-MM-DD，所有者时区"
+              },
+              "replayed": {
+                "type": "boolean",
+                "description": "true 表示这是对同一次操作的重放，没有重复写入"
+              }
+            },
+            "required": [
+              "reflection",
+              "comparison",
+              "status",
+              "nextReviewOn",
+              "replayed"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "_meta": {
+        "nbd/scopes": [
+          "read",
+          "write"
+        ]
+      }
+    },
+    {
+      "name": "snooze_review",
+      "title": "推迟回看",
+      "description": "自动回看排程已关闭；保留兼容入口，调用返回 NOT_SCHEDULED。手动回看使用 add_reflection。",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "clientRequestId": {
+            "type": "string",
+            "minLength": 8,
+            "maxLength": 64,
+            "description": "本次操作的唯一编号（建议 UUID）。每次新操作生成一个，重试同一操作时必须复用同一个",
+            "pattern": "^[A-Za-z0-9_-]{8,64}$"
+          },
+          "momentId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "事件 ID"
+          },
+          "days": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 90,
+            "description": "推迟几天"
+          }
+        },
+        "required": [
+          "clientRequestId",
+          "momentId",
+          "days"
+        ],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "object",
+            "properties": {
+              "momentId": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "fresh",
+                  "cooling",
+                  "due",
+                  "reflected",
+                  "settled",
+                  "archived"
+                ],
+                "description": "fresh=刚记下，cooling=冷却中，due=该回看，reflected=已回看，settled=已释怀，archived=已归档"
+              },
+              "nextReviewOn": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "format": "date",
+                "description": "YYYY-MM-DD，所有者时区"
+              },
+              "snoozedUntil": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "format": "date",
+                "description": "YYYY-MM-DD，所有者时区"
+              },
+              "replayed": {
+                "type": "boolean",
+                "description": "true 表示这是对同一次操作的重放，没有重复写入"
+              }
+            },
+            "required": [
+              "momentId",
+              "status",
+              "nextReviewOn",
+              "snoozedUntil",
+              "replayed"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "_meta": {
+        "nbd/scopes": [
+          "read",
+          "write"
+        ]
+      }
+    },
+    {
+      "name": "create_lesson",
+      "title": "新建一条经验",
+      "description": "把用户自己总结出的经验存进经验库，可以同时关联相关的事。只记用户认可的说法；已有类似经验时用 add_reflection 的 lessonIds 关联，不要重复新建。已有经验的正文只能在网页上改。",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "clientRequestId": {
+            "type": "string",
+            "minLength": 8,
+            "maxLength": 64,
+            "description": "本次操作的唯一编号（建议 UUID）。每次新操作生成一个，重试同一操作时必须复用同一个",
+            "pattern": "^[A-Za-z0-9_-]{8,64}$"
+          },
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80,
+            "description": "经验一句话，例如「别人记得的远比我以为的少」"
+          },
+          "body": {
+            "type": "string",
+            "minLength": 0,
+            "maxLength": 5000,
+            "description": "可选：展开说明"
+          },
+          "momentIds": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "maxItems": 20,
+            "description": "可选：关联的事",
+            "uniqueItems": true
+          }
+        },
+        "required": [
+          "clientRequestId",
+          "title"
+        ],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "object",
+            "properties": {
+              "lesson": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "title": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 80
+                  },
+                  "momentIds": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "maxItems": 20
+                  }
+                },
+                "required": [
+                  "id",
+                  "title",
+                  "momentIds"
+                ],
+                "additionalProperties": false
+              },
+              "replayed": {
+                "type": "boolean",
+                "description": "true 表示这是对同一次操作的重放，没有重复写入"
+              }
+            },
+            "required": [
+              "lesson",
+              "replayed"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "_meta": {
+        "nbd/scopes": [
+          "read",
+          "write"
+        ]
+      }
+    }
+  ],
+  "prompts": [
+    {
+      "name": "record",
+      "title": "记一笔",
+      "description": "引导你温和地问清发生了什么、当时的情绪和强度、担心什么，复述确认后调用 record_moment。",
+      "arguments": [
+        {
+          "name": "brief",
+          "description": "用户一句话说的发生了什么（可选）",
+          "required": false
+        }
+      ],
+      "_meta": {
+        "nbd/scopes": [
+          "write"
+        ]
+      }
+    },
+    {
+      "name": "reflect",
+      "title": "回看",
+      "description": "找出该回看的事（或指定的一件），先展示「当时的你」，再引导用户写下现在的感受和结论，最后调用 add_reflection。",
+      "arguments": [
+        {
+          "name": "momentId",
+          "description": "指定要回看的事（可选，不填就从待回看里挑）",
+          "required": false
+        }
+      ],
+      "_meta": {
+        "nbd/scopes": [
+          "read",
+          "write"
+        ]
+      }
+    }
+  ]
+}
