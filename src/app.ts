@@ -139,6 +139,13 @@ export async function buildApp(
       requestId: req.id,
     });
   });
+  app.addHook("onSend", async (_req, reply, payload) => {
+    if (String(reply.getHeader("Content-Type") ?? "").startsWith("text/html")) {
+      const cache = String(reply.getHeader("Cache-Control") ?? "no-cache");
+      reply.header("Cache-Control", `${cache}, no-transform`);
+    }
+    return payload;
+  });
   for (const path of ["/healthz", "/readyz"]) {
     const operation = apiContract.paths[path].get;
     const response = Object.fromEntries(

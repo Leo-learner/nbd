@@ -16,6 +16,8 @@ API 使用同源 Cookie 会话、CSRF header、no-store。401 重新进入登录
 
 不使用 localStorage、sessionStorage、IndexedDB、Service Worker，不引入 CDN、外部字体、统计或第三方请求。Agent 密钥明文只在成功弹窗显示，Esc 和遮罩不能关闭该弹窗；点击「我已保存，关闭」后丢弃明文。回收站彻底删除需要勾选确认。洞察遵守 minSample，样本不足时隐藏易误导的数值。
 
+HTML 响应保留原缓存策略并附加 `no-transform`，阻止 Cloudflare 自动注入统计脚本；CSP 仍只允许本站脚本与连接。依据 [Cloudflare Web Analytics 说明](https://developers.cloudflare.com/web-analytics/get-started/)。
+
 ## 发布
 
 先本地验收，提交并推送同一版本。首次上线本实现需要先运行 `bash scripts/deploy.sh` 更新静态资源路由，再运行 `bash scripts/deploy-frontend.sh`。以后纯前端变更只需后一个脚本。

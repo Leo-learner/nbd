@@ -39,10 +39,12 @@ test("frontend symlink swaps serve new hashed assets and preserve API boundaries
     { db },
   );
   try {
-    assert.equal(
-      (await app.inject({ url: "/", headers: { accept: "text/html" } })).body,
-      "<h1>First</h1>",
-    );
+    const initial = await app.inject({
+      url: "/",
+      headers: { accept: "text/html" },
+    });
+    assert.equal(initial.body, "<h1>First</h1>");
+    assert.match(String(initial.headers["cache-control"]), /no-transform/);
     await symlink(second, join(dir, "next"));
     await rename(join(dir, "next"), publicDir);
     const asset = await app.inject("/assets/app-new123.js");
