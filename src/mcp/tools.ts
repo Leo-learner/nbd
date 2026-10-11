@@ -68,7 +68,18 @@ export function createMcpServer(
       }),
     list_due_reviews: (a) => s.moments.due(p, a),
     search_moments: (a) => s.moments.list(p, { ...a, limit: a.limit ?? 20 }),
-    get_moment: (a) => ({ moment: s.moments.detail(p, a.momentId) }),
+    get_moment: (a) => {
+      const moment = s.moments.detail(p, a.momentId);
+      return {
+        moment: {
+          ...moment,
+          notes: moment.notes.map((note: Row) => ({
+            ...note,
+            authorLabel: note.author.label,
+          })),
+        },
+      };
+    },
     list_lessons: (a) => s.library.list(p, a),
     get_insights: (a) => ({
       overview: s.insights.overview(p, a),

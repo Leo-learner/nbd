@@ -100,6 +100,30 @@ for (const version of ["2026-07-28", "2025-11-25"])
         },
       });
       assert.ok(!r.isError, JSON.stringify(r));
+      const note = await c.callTool({
+        name: "add_note",
+        arguments: {
+          clientRequestId: "read-after-note-01",
+          momentId: id,
+          body: "详情读取用的虚构补记",
+        },
+      });
+      assert.ok(!note.isError, JSON.stringify(note));
+      const afterReflection = await c.callTool({
+        name: "get_moment",
+        arguments: { momentId: id },
+      });
+      assert.ok(!afterReflection.isError, JSON.stringify(afterReflection));
+      assert.equal(
+        (afterReflection.structuredContent as any).data.moment.notes[0]
+          .authorLabel,
+        "测试 Agent",
+      );
+      assert.equal(
+        (afterReflection.structuredContent as any).data.moment.reflections
+          .length,
+        1,
+      );
       assert.ok(
         !(await c.callTool({ name: "list_lessons", arguments: {} })).isError,
       );
