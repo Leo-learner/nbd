@@ -165,6 +165,11 @@ export class DataService {
           .prepare("DELETE FROM oauth_requests WHERE expires_at<?")
           .run(now);
         this.db
+          .prepare(
+            "UPDATE oauth_grants SET revoked_at=? WHERE revoked_at IS NULL AND created_at<=? AND NOT EXISTS (SELECT 1 FROM oauth_tokens t WHERE t.grant_id=oauth_grants.id)",
+          )
+          .run(now, now - 3600000);
+        this.db
           .prepare("DELETE FROM oauth_codes WHERE expires_at<?")
           .run(now - DAY);
         this.db

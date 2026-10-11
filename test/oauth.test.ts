@@ -257,3 +257,160 @@ test("授权码过期、刷新作用域不能扩大、未知令牌撤销返回�
     await f.close();
   }
 });
+
+test("确认页 CSP 只放行已校验回调 origin，其他响应保持 self", async () => {
+  const f = await oauthFixture();
+  try {
+    const begin = await f.begin();
+    assert.match(
+      String(begin.headers["content-security-policy"]),
+      new RegExp(
+        `form-action 'self' ${new URL(f.redirectUri).origin.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`,
+      ),
+    );
+    for (const url of [
+      "/healthz",
+      "/readyz",
+      "/.well-known/oauth-authorization-server",
+    ]) {
+      const result = await f.app.inject({ url });
+      assert.ok(
+        String(result.headers["content-security-policy"]).endsWith(
+          "form-action 'self'",
+        ),
+      );
+    }
+    const rejected = await f.begin({
+      redirect_uri: "https://evil.example/callback",
+    });
+    assert.equal(rejected.statusCode, 400);
+    assert.ok(
+      !String(rejected.headers["content-security-policy"]).includes(
+        "evil.example",
+      ),
+    );
+  } finally {
+    await f.close();
+  }
+});
+
+test("换码成功才替换同客户端旧授权，失败换码保留旧令牌", async () => {
+  const f = await oauthFixture();
+  try {
+    const exchange = (code: string, code_verifier = f.verifier) =>
+      f.tokenRequest({
+        grant_type: "authorization_code",
+        code,
+        redirect_uri: f.redirectUri,
+        code_verifier,
+      });
+    const old = await f.approve(await f.begin());
+    const oldToken = (
+      await exchange(new URL(old.headers.location!).searchParams.get("code")!)
+    ).json();
+    const next = await f.approve(await f.begin());
+    const code = new URL(next.headers.location!).searchParams.get("code")!;
+    assert.equal(f.s.access.apps(f.owner).items.length, 1);
+    assert.ok(f.s.access.authenticate(oldToken.access_token));
+    assert.equal(
+      (await exchange(code, "x".repeat(43))).json().error,
+      "invalid_grant",
+    );
+    assert.ok(f.s.access.authenticate(oldToken.access_token));
+    const minted = await exchange(code);
+    assert.equal(minted.statusCode, 200, minted.body);
+    assert.throws(() => f.s.access.authenticate(oldToken.access_token));
+    assert.equal(
+      (
+        await f.tokenRequest({
+          grant_type: "refresh_token",
+          refresh_token: oldToken.refresh_token,
+        })
+      ).json().error,
+      "invalid_grant",
+    );
+    assert.ok(f.s.access.authenticate(minted.json().access_token));
+    assert.equal(f.s.access.apps(f.owner).items.length, 1);
+  } finally {
+    await f.close();
+  }
+});
+
+test("弃用的未换码授权在一小时后撤销，已签发授权保留", async () => {
+  const f = await oauthFixture();
+  try {
+    await f.approve(await f.begin());
+    assert.equal(f.s.access.apps(f.owner).items.length, 0);
+    f.setNow(f.getNow() + 3599999);
+    f.s.data.cleanup();
+    assert.equal(
+      (
+        f.db
+          .prepare(
+            "SELECT count(*) n FROM oauth_grants WHERE revoked_at IS NULL",
+          )
+          .get() as any
+      ).n,
+      1,
+    );
+    f.setNow(f.getNow() + 1);
+    f.s.data.cleanup();
+    assert.equal(
+      (
+        f.db
+          .prepare(
+            "SELECT count(*) n FROM oauth_grants WHERE revoked_at IS NULL",
+          )
+          .get() as any
+      ).n,
+      0,
+    );
+  } finally {
+    await f.close();
+  }
+});
+
+test("OAuth 密码错误重显表单，保留请求 CSRF 和勾选但不回显凭据", async () => {
+  const f = await oauthFixture();
+  try {
+    const begin = await f.begin(),
+      requestId = begin.body.match(/name="requestId" value="([^"]+)"/)![1],
+      csrf = begin.body.match(/name="csrf" value="([^"]+)"/)![1],
+      cookie = String(begin.headers["set-cookie"]).split(";")[0];
+    const submit = (pass: string) =>
+      f.app.inject({
+        method: "POST",
+        url: "/oauth/authorize",
+        headers: {
+          cookie,
+          "content-type": "application/x-www-form-urlencoded",
+          origin: f.config.publicOrigin,
+        },
+        payload: new URLSearchParams({
+          requestId,
+          csrf,
+          decision: "approve",
+          write: "1",
+          username: "leo",
+          password: pass,
+        }).toString(),
+      });
+    const retry = await submit("incorrect-password");
+    assert.equal(retry.statusCode, 401, retry.body);
+    assert.match(String(retry.headers["content-type"]), /^text\/html/);
+    assert.ok(retry.body.includes("用户名或密码错误"));
+    assert.ok(retry.body.includes(`name="requestId" value="${requestId}"`));
+    assert.ok(retry.body.includes(`name="csrf" value="${csrf}"`));
+    assert.ok(!retry.body.includes("incorrect-password"));
+    assert.ok(retry.body.includes('name="write" value="1" checked'));
+    assert.ok(retry.body.includes('name="read" value="1">'));
+    assert.ok(
+      String(retry.headers["content-security-policy"]).endsWith(
+        `form-action 'self' ${new URL(f.redirectUri).origin}`,
+      ),
+    );
+    assert.equal((await submit(password)).statusCode, 302);
+  } finally {
+    await f.close();
+  }
+});

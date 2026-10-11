@@ -308,6 +308,11 @@ export async function buildApp(
       },
       async (req, reply) => {
         const begin = await s.oauth.begin(req.query as Row);
+        const callback = new URL(begin.request.redirect_uri).origin;
+        reply.header(
+          "Content-Security-Policy",
+          csp.replace("form-action 'self'", `form-action 'self' ${callback}`),
+        );
         reply.setCookie(csrfCookie, begin.csrf, {
           path: "/",
           httpOnly: true,
@@ -340,11 +345,37 @@ export async function buildApp(
           req.headers.origin !== config.publicOrigin
         )
           throw new OAuthError("invalid_request", "Invalid Origin", 403);
-        const result = await s.oauth.approve(
-          req.body as Row,
-          req.cookies[csrfCookie],
-          req.cookies[cookieName(s)],
-        );
+        let result;
+        try {
+          result = await s.oauth.approve(
+            req.body as Row,
+            req.cookies[csrfCookie],
+            req.cookies[cookieName(s)],
+          );
+        } catch (e) {
+          if (!(e instanceof AppError) || e.code !== "INVALID_CREDENTIALS")
+            throw e;
+          const body = req.body as Row,
+            request = s.oauth.consentRequest(body, req.cookies[csrfCookie]),
+            client = await s.oauth.client(request.client_id),
+            callback = new URL(request.redirect_uri).origin;
+          return reply
+            .header(
+              "Content-Security-Policy",
+              csp.replace(
+                "form-action 'self'",
+                `form-action 'self' ${callback}`,
+              ),
+            )
+            .code(401)
+            .type("text/html; charset=utf-8")
+            .send(
+              s.oauth.form(request, body.csrf, client, false, {
+                message: "用户名或密码错误，请重试。",
+                selected: body,
+              }),
+            );
+        }
         if (result.session) setSession(reply, s, result.session);
         reply.clearCookie(csrfCookie, {
           path: "/",

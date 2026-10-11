@@ -205,17 +205,21 @@ export class OAuthService {
     insert(this.db, "oauth_requests", request);
     return { request, csrf, client };
   }
-  form(r: Row, csrf: string, client: Row, loggedIn: boolean): string {
+  form(
+    r: Row,
+    csrf: string,
+    client: Row,
+    loggedIn: boolean,
+    retry?: { message: string; selected: Row },
+  ): string {
     const scopes = JSON.parse(r.scopes_json) as string[],
       field = (name: string, value: string) =>
         `<input type="hidden" name="${name}" value="${escapeHtml(value)}">`;
-    return `<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>NBD · 授权确认</title><body><main><h1>连接 NBD</h1><p>${escapeHtml(client.client_name)} 请求访问你的私人记录。</p><p>客户端：${escapeHtml(new URL(r.client_id).hostname)}；回调：${escapeHtml(new URL(r.redirect_uri).hostname)}</p><form method="post" action="/oauth/authorize">${field("requestId", r.id)}${field("csrf", csrf)}${loggedIn ? "" : '<label>用户名 <input name="username" autocomplete="username" required></label><label>密码 <input type="password" name="password" autocomplete="current-password" required></label>'}${scopes.map((s) => `<label><input type="checkbox" name="${s}" value="1" checked>${s === "read" ? "读取历史" : "记录与补记"}</label>`).join("")}<p><button name="decision" value="approve">同意连接</button> <button name="decision" value="deny" formnovalidate>拒绝</button></p></form></main></body></html>`;
+    return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>NBD · 授权确认</title><style> *{box-sizing:border-box}body{margin:0;background:#f5f3ee;color:#272d29;font:16px/1.6 system-ui,sans-serif;padding:24px}main{max-width:520px;margin:8vh auto;background:#fff;padding:32px;border-radius:20px;border:1px solid #dddcd4}h1{margin-top:0}p{overflow-wrap:anywhere}.identity{font-size:14px;color:#58615b}label{display:block;margin:16px 0}input:not([type=checkbox]){display:block;width:100%;font:inherit;padding:10px;border:1px solid #b5bdb5;border-radius:8px}input[type=checkbox]{width:18px;height:18px;vertical-align:middle;margin-right:8px}button{font:inherit;padding:12px 20px;min-height:44px;border:1px solid #3b5947;border-radius:8px;background:#3b5947;color:#fff;margin:4px 8px 4px 0}button[value=deny]{background:#fff;color:#3b5947}.error{padding:12px;border-radius:8px;background:#fff0ed;color:#9b3425}@media(max-width:540px){body{padding:16px}main{margin:16px auto;padding:24px}button{width:100%}}</style></head><body><main><h1>连接 NBD</h1><p>${escapeHtml(client.client_name)} 请求访问你的私人记录。</p><p class="identity">客户端：${escapeHtml(new URL(r.client_id).hostname)}<br>回调：${escapeHtml(new URL(r.redirect_uri).hostname)}</p>${retry ? `<p class="error" role="alert">${escapeHtml(retry.message)}</p>` : ""}<form method="post" action="/oauth/authorize">${field("requestId", r.id)}${field("csrf", csrf)}${loggedIn ? "" : '<label>用户名 <input name="username" autocomplete="username" required></label><label>密码 <input type="password" name="password" autocomplete="current-password" required></label>'}${scopes.map((s) => `<label><input type="checkbox" name="${s}" value="1"${!retry || retry.selected[s] === "1" ? " checked" : ""}>${s === "read" ? "读取历史" : "记录与补记"}</label>`).join("")}<p><button name="decision" value="approve">同意连接</button> <button name="decision" value="deny" formnovalidate>拒绝</button></p></form></main></body></html>`;
   }
-  async approve(
-    body: Row,
-    csrfCookie: string | undefined,
-    sessionToken?: string,
-  ): Promise<{ redirect: string; session?: string }> {
+  consentRequest(body: Row, csrfCookie: string | undefined): Row {
+    if (typeof body.requestId !== "string")
+      error("invalid_request", "Invalid consent request");
     const r = this.db
       .prepare("SELECT * FROM oauth_requests WHERE id=? AND expires_at>?")
       .get(body.requestId, this.config.now()) as Row | undefined;
@@ -227,6 +231,14 @@ export class OAuthService {
       !sameDigest(digest(csrfCookie), digest(body.csrf))
     )
       error("invalid_request", "Invalid or expired consent request");
+    return r;
+  }
+  async approve(
+    body: Row,
+    csrfCookie: string | undefined,
+    sessionToken?: string,
+  ): Promise<{ redirect: string; session?: string }> {
+    const r = this.consentRequest(body, csrfCookie);
     if (!["approve", "deny"].includes(body.decision))
       error("invalid_request", "Consent decision is required");
     const redirect = new URL(r.redirect_uri);
@@ -270,14 +282,16 @@ export class OAuthService {
               .run(r.id, this.config.now()).changes !== 1
           )
             error("invalid_request", "Consent already used or expired");
+          // The schema permits only one active grant per user/client. A
+          // pending code references that grant without changing its tokens
+          // or scopes; exchange creates the replacement atomically.
           const previous = this.db
             .prepare(
-              "SELECT id FROM oauth_grants WHERE user_id=? AND client_id=? AND revoked_at IS NULL",
+              "SELECT * FROM oauth_grants WHERE user_id=? AND client_id=? AND revoked_at IS NULL",
             )
             .get(user!.id, r.client_id) as Row | undefined;
-          if (previous) this.access.revokeGrant(previous.id);
           const grant = {
-            id: randomUUID(),
+            id: previous?.id ?? randomUUID(),
             user_id: user!.id,
             client_id: r.client_id,
             client_name: client.client_name,
@@ -285,7 +299,7 @@ export class OAuthService {
             scopes_json: JSON.stringify(scopes),
             created_at: this.config.now(),
           };
-          insert(this.db, "oauth_grants", grant);
+          if (!previous) insert(this.db, "oauth_grants", grant);
           insert(this.db, "oauth_codes", {
             code_hash: digest(code),
             grant_id: grant.id,
@@ -369,7 +383,7 @@ export class OAuthService {
         ).get(digest(token)) as Row | undefined;
         if (!row || row.resource !== this.resource)
           return { error: "invalid_grant" };
-        const grant = this.db
+        let grant = this.db
           .prepare("SELECT * FROM oauth_grants WHERE id=?")
           .get(row.grant_id) as Row | undefined;
         if (
@@ -432,6 +446,26 @@ export class OAuthService {
             .run(now, row.code_hash).changes !== 1
         )
           return { error: "invalid_grant" };
+        if (isCode) {
+          const client = this.db
+            .prepare("SELECT client_name FROM oauth_clients WHERE client_id=?")
+            .get(grant.client_id) as Row | undefined;
+          const replacement = {
+            id: randomUUID(),
+            user_id: grant.user_id,
+            client_id: grant.client_id,
+            client_name: client?.client_name ?? grant.client_name,
+            redirect_host: new URL(row.redirect_uri).hostname,
+            scopes_json: scopesJson,
+            created_at: now,
+          };
+          this.access.revokeGrant(grant.id);
+          insert(this.db, "oauth_grants", replacement);
+          this.db
+            .prepare("UPDATE oauth_codes SET grant_id=? WHERE code_hash=?")
+            .run(replacement.id, row.code_hash);
+          grant = replacement;
+        }
         const minted = this.mint(grant, scopesJson);
         if (!isCode)
           this.db
