@@ -94,14 +94,14 @@
 前端构建产物和后端版本分开发布（需要同意）：
 
 ```bash
-scripts/deploy-frontend.sh path/to/frontend/dist
+bash scripts/deploy-frontend.sh
 ```
 
 脚本把产物打包上传，然后在服务器上依次：
-1. 解压到 `/opt/apps/nbd/frontend-releases/<UTC>/`（root:root，文件 644）；
-2. 检查 `index.html` 存在；
+1. 构建当前已推送提交，解压到 `/opt/apps/nbd/frontend-releases/<commit>/`（root:root，文件 644）；
+2. 校验归档 SHA256、`index.html` 和 `frontend-release.json` 逐文件哈希；
 3. 用 `ln -s … frontend.next && mv -Tf frontend.next frontend` 原子切换；
-4. 只保留最近 5 个版本。
+4. 验证每个产物的 HTTP 内容及健康检查；失败恢复原软链。旧前端版本保留，不自动清理。
 
 回滚就是把软链指回上一个目录，不需要重启服务。HTML 用 ETag 重新验证，用户不需要强制刷新。
 

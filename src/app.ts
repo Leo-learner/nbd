@@ -96,6 +96,7 @@ export async function buildApp(
       reply.header("Strict-Transport-Security", "max-age=31536000");
   });
   app.setErrorHandler((e, req, reply) => {
+    reply.removeHeader("Content-Disposition");
     const status =
       e instanceof AppError
         ? e.status
@@ -122,23 +123,21 @@ export async function buildApp(
       );
     if (status >= 500)
       req.log.error({ code, requestId: req.id }, "Request failed");
-    reply
-      .code(code === "STORAGE_BUSY" ? 503 : validation ? 400 : status)
-      .send({
-        error: {
-          code,
-          message:
-            e instanceof AppError
-              ? e.message
-              : validation
-                ? "请求参数不符合接口要求"
-                : status >= 500
-                  ? "服务暂时不可用"
-                  : "请求失败",
-          ...(e instanceof AppError && e.details ? { details: e.details } : {}),
-        },
-        requestId: req.id,
-      });
+    reply.code(code === "STORAGE_BUSY" ? 503 : validation ? 400 : status).send({
+      error: {
+        code,
+        message:
+          e instanceof AppError
+            ? e.message
+            : validation
+              ? "请求参数不符合接口要求"
+              : status >= 500
+                ? "服务暂时不可用"
+                : "请求失败",
+        ...(e instanceof AppError && e.details ? { details: e.details } : {}),
+      },
+      requestId: req.id,
+    });
   });
   for (const path of ["/healthz", "/readyz"]) {
     const operation = apiContract.paths[path].get;
@@ -261,22 +260,20 @@ export async function buildApp(
           : e instanceof AppError
             ? e.status
             : 400;
-      reply
-        .code(status)
-        .send({
-          error:
-            e instanceof OAuthError
-              ? e.code
-              : e instanceof AppError && e.code === "INVALID_CREDENTIALS"
-                ? "access_denied"
-                : "invalid_request",
-          error_description:
-            e instanceof OAuthError
+      reply.code(status).send({
+        error:
+          e instanceof OAuthError
+            ? e.code
+            : e instanceof AppError && e.code === "INVALID_CREDENTIALS"
+              ? "access_denied"
+              : "invalid_request",
+        error_description:
+          e instanceof OAuthError
+            ? e.message
+            : e instanceof AppError
               ? e.message
-              : e instanceof AppError
-                ? e.message
-                : "Invalid request",
-        });
+              : "Invalid request",
+      });
     });
     for (const path of [
       "/.well-known/oauth-protected-resource",
@@ -381,7 +378,9 @@ export async function buildApp(
     await app.register(staticPlugin, {
       root: config.publicDir,
       prefix: "/",
-      wildcard: false,
+      // Frontend releases switch a directory symlink without restarting the API.
+      // Resolve new hashed asset names on each request instead of at startup.
+      wildcard: true,
       index: ["index.html"],
     });
   app.setNotFoundHandler((req, reply) => {
@@ -395,12 +394,10 @@ export async function buildApp(
       existsSync(config.publicDir + "/index.html")
     )
       return reply.sendFile("index.html");
-    return reply
-      .code(404)
-      .send({
-        error: { code: "NOT_FOUND", message: "接口不存在" },
-        requestId: req.id,
-      });
+    return reply.code(404).send({
+      error: { code: "NOT_FOUND", message: "接口不存在" },
+      requestId: req.id,
+    });
   });
   app.addHook("onClose", async () => {
     if (!deps.db) db.close();

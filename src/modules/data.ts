@@ -74,7 +74,7 @@ export class DataService {
             )
             .all(p.userId) as Row[]
         ).map((r) => ({
-          ...this.moments.detail(p, r.id),
+          moment: this.moments.detail(p, r.id),
           revisions: this.moments.revisions(p, r.id).items,
         })),
         lessons: (

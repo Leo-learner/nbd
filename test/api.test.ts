@@ -415,6 +415,52 @@ test("密钥密码确认、签发、撤销，以及 settings/export/audit", asyn
     await f.close();
   }
 });
+test("有记录的完整导出符合契约，并保留回收站、原话修订、补记与复盘", async () => {
+  const f = await fixture();
+  try {
+    const id = f.s.moments.record(f.agent, momentInput()).moment.id;
+    const before = f.s.moments.detail(f.owner, id);
+    assert.equal(
+      (
+        await f.api("PATCH", `/moments/${id}`, {
+          expectedRevision: before.revision,
+          title: "更正后的标题",
+        })
+      ).statusCode,
+      200,
+    );
+    assert.equal(
+      (await f.api("POST", `/moments/${id}/notes`, { body: "虚构的后来补记" }))
+        .statusCode,
+      201,
+    );
+    assert.equal(
+      (
+        await f.api("POST", `/moments/${id}/reflections`, {
+          intensityNow: 2,
+          resolution: "easing",
+        })
+      ).statusCode,
+      201,
+    );
+    assert.equal((await f.api("DELETE", `/moments/${id}`)).statusCode, 200);
+    const response = await f.api("GET", "/export");
+    assert.equal(response.statusCode, 200, response.body);
+    assert.match(String(response.headers["content-disposition"]), /attachment/);
+    const exported = response.json();
+    assert.equal(exported.moments.length, 1);
+    const entry = exported.moments[0];
+    assert.equal(entry.moment.id, id);
+    assert.equal(entry.moment.title, "更正后的标题");
+    assert.ok(entry.moment.deletedAt);
+    assert.equal(entry.moment.notes[0].body, "虚构的后来补记");
+    assert.equal(entry.moment.reflections[0].intensityNow, 2);
+    assert.equal(entry.revisions[0].snapshot.title, before.title);
+    assert.ok(!JSON.stringify(exported).includes(password));
+  } finally {
+    await f.close();
+  }
+});
 test("完整导出不被经验库的 500 条列表上限截断", async () => {
   const f = await fixture();
   try {
