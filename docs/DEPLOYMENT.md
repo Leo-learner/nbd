@@ -8,15 +8,15 @@
 
 ## 1. 环境事实
 
-2026-10-10 只读勘察的结果。实施前再查一遍，不要依赖过期的状态。
+以下系统容量为 2026-10-10 历史勘察；2026-10-11 已复核 NBD 服务、版本和代理现状。容量与其他站点实施前仍需重查。
 
 | 项目 | 情况 |
 |---|---|
 | 系统 | Ubuntu 22.04.5，2 核，内存 891 MB（可用约 355 MB），swap 1 GB（已用约一半），磁盘 62 GB（已用 12%） |
 | 软件 | Node v22.23.0（`/usr/bin/node`）、nginx 1.18、certbot 1.21、fail2ban（只有默认的 sshd jail）；**没有** `sqlite3` 命令行（备份用 better-sqlite3 的 API，不需要它） |
-| 已占用端口 | 22、80、443、3010、3030、3040、3200、3210、3220、3221、5100、43210；**3230 空闲** |
+| 已占用端口 | 历史端口：22、80、443、3010、3030、3040、3200、3210、3220、3221、5100、43210；NBD 现已监听 `127.0.0.1:3230` |
 | 已有应用 | `/opt/apps/` 下有 ai-chat、clawdrop、game-hub、mac-remote-relay、plos、pocket-terminal、remote-term-relay、unfortunately |
-| DNS | dkz12345.com 的 NS 在 Cloudflare，子域名都是灰云（只解析，不代理）；`nbd.dkz12345.com` 目前是 NXDOMAIN |
+| DNS | 2026-10-11 验收时为 Cloudflare 橙云代理；本次经所有者批准，只把 `nbd.dkz12345.com` 的 A 记录改为灰云。后台显示「仅 DNS」，DoH 返回 `20.48.14.96`、TTL 300；源站 HTTPS 和 readyz 验证通过 |
 | 访问 | `ssh -i ~/Desktop/ssh-key-removing-restricted/leo-web-key.pem leo@20.48.14.96`；用域名连接时加 `-o HostKeyAlias=20.48.14.96`；leo 有免密 sudo |
 
 内存很紧，所以 nbd 用**单进程**（网页 API、MCP、OAuth 都在一起），并限制 `MemoryMax=256M`、`--max-old-space-size=128`。
@@ -25,8 +25,8 @@
 
 | 内容 | 位置 | 属主与权限 |
 |---|---|---|
-| 代码版本 | `/opt/apps/nbd/releases/<UTC 时间戳>/`，`/opt/apps/nbd/current` 软链指向当前版本 | root:root；软链用 `mv -Tf` 原子切换；只保留最近 5 个版本 |
-| 前端 | `/opt/apps/nbd/frontend` → 软链到 `/opt/apps/nbd/frontend-releases/<UTC>/` | root:root；不随后端发版变化 |
+| 代码版本 | `/opt/apps/nbd/releases/<40 位提交号>/`，`/opt/apps/nbd/current` 软链指向当前版本 | root:root；软链用唯一临时目录与 Node rename 原子切换；保留最近 5 个版本，并额外保护当前版本和上一次回滚目标 |
+| 前端 | `/opt/apps/nbd/frontend` → 软链到 `/opt/apps/nbd/frontend-releases/<40 位提交号>/` | root:root；不随后端发版变化 |
 | 数据 | `/var/lib/nbd/nbd.sqlite`（+ `-wal`、`-shm`），备份在 `/var/lib/nbd/backups/` | `nbd:nbd 0700`，库文件 0600（比 Game Hub 更严：nginx 不需要读数据目录） |
 | 配置 | `/etc/nbd.env` | `root:nbd 0640`，**不放任何密钥**（会话和令牌只存哈希，OAuth 令牌是不透明随机串，不需要签名密钥） |
 | 服务 | `nbd.service`、`nbd-backup.service` + `nbd-backup.timer` | 运行用户 `nbd`（系统用户，nologin） |
@@ -38,7 +38,7 @@
 按顺序做。前 3 步不碰服务器。
 
 1. **代码就绪**：本地 `npm run check` 通过；推送到公开仓库 `Leo-learner/nbd` 前，对 `git archive HEAD` 的内容做一次密钥扫描，并确认 `docs/deployment-private/`、`.work/` 在 `.gitignore` 里。
-2. **DNS**（所有者在 Cloudflare 后台操作）：加 A 记录 `nbd` → `20.48.14.96`，**灰云**（只解析），和其他子域名一致。本机走 Clash 的 fake-ip，`dig` 看到的是假地址，要用 DoH 确认：
+2. **DNS**（在 Cloudflare 后台操作）：加 A 记录 `nbd` → `20.48.14.96`，**灰云**（只解析）；其他子域名独立配置。本机走 Clash 的 fake-ip，`dig` 看到的是假地址，要用 DoH 确认：
    ```bash
    curl -s 'https://cloudflare-dns.com/dns-query?name=nbd.dkz12345.com&type=A' -H 'accept: application/dns-json'
    ```
@@ -69,25 +69,25 @@
 **发版**（每次需要同意）：在本机运行 `scripts/deploy.sh`：
 
 1. 要求 Node 22，跑 `npm run check`；要求工作区干净，并且 HEAD 已经推到 `origin` 的当前分支。
-2. 版本号 = UTC 时间戳；`git archive` + `dist` + `RELEASE.json`（提交号、版本号、仓库地址）打成 tar.gz。
-3. 把包 `scp` 到服务器的 `/tmp/`，然后 `ssh … "sudo -n bash -s -- <release> <commit>" < deploy/install.sh`。
+2. 版本目录按完整 Git 提交号命名；`git archive HEAD` + `dist` + `RELEASE.json`（提交号、仓库地址、构建时间）打成 tar.gz，并计算 SHA256。
+3. 把包 `scp` 到服务器的 `/tmp/`，然后 `ssh … "sudo -n bash -s -- <archive> <commit> <sha256>" < deploy/install.sh`。
 
 `install.sh` 在服务器上依次执行：
 1. 校验参数、提交号；首次部署时如果 3230 已被别的程序占用就拒绝。
-2. 解压到 `releases/<release>`，以 `nbd` 用户运行 `npm ci --omit=dev`，并自检原生模块（better-sqlite3、argon2）；然后把整个目录交给 root。
+2. 解压到 `releases/<commit>`，以 `nbd` 用户运行 `npm ci --omit=dev`，并自检原生模块（better-sqlite3、argon2）；然后把整个目录交给 root。
 3. 用**上一个版本**的代码做部署前备份（`admin.js backup`）。
 4. 设置 `trap rollback ERR`；停 `nbd`；跑迁移（`admin.js migrate`）；安装 unit 和 timer。
-5. 用 `ln -s … current.next && mv -Tf current.next current` 原子切换，启动服务；轮询 `http://127.0.0.1:3230/readyz` 最多 30 秒。
+5. 用唯一临时目录创建候选软链，经 Node rename 原子切换并核对最终目标，启动服务；轮询 `http://127.0.0.1:3230/readyz` 最多 30 秒。
 6. 安装 nginx 站点前，先备份旧配置；`nginx -t` 失败就恢复旧配置并回滚。
 7. 从本机发起检查：`curl --resolve nbd.dkz12345.com:443:127.0.0.1` 访问 `/readyz`；`/mcp` 应返回 401。
-8. 清理：删掉 `/tmp` 里的包；`releases/` 只保留最近 5 个。
+8. 清理：删掉 `/tmp` 里的包；`releases/` 保留最近 5 个提交目录，并跳过当前版本和本次部署前的版本（必要时总数超过 5）；未知名称与软链不删除。清理失败只告警，已通过健康检查的发布继续有效。
 
 **回滚**：
 - 部署过程中失败时，`trap` 会把 `current` 指回上一个版本、重启服务、恢复 nginx 配置，**但不回滚数据库**。
 - 只能回滚到和当前数据库结构兼容的版本。迁移已经跑过、旧代码不兼容时，要走第 6 节的数据库恢复流程，并且会丢掉备份之后写入的数据。
 - 手动回滚：`sudo ln -sfn /opt/apps/nbd/releases/<旧版本> /opt/apps/nbd/current.rb && sudo mv -Tf /opt/apps/nbd/current.rb /opt/apps/nbd/current && sudo systemctl restart nbd`（需要同意）。
 
-`install.sh` 和 Game Hub 版本的差异：只有一个服务（没有单独的 MCP 进程，也就没有 sudo 助手和 sudoers 文件）；端口 3230；数据目录 `nbd:nbd 0700`；前端用软链切换；多了 nginx 日志格式；只保留 5 个版本。
+`install.sh` 和 Game Hub 版本的差异：只有一个服务（没有单独的 MCP 进程，也就没有 sudo 助手和 sudoers 文件）；端口 3230；数据目录 `nbd:nbd 0700`；前端用软链切换；多了 nginx 日志格式；按提交号保留最近 5 个版本并保护当前和回滚目标。
 
 ## 5. 前端上线
 
@@ -160,6 +160,16 @@ sudo fail2ban-client status nbd-auth
 | 自己被 fail2ban 封了 | `sudo fail2ban-client set nbd-auth unbanip <IP>`（需要同意） |
 | claude.ai 连接器突然全部失败 | 先查 `160.79.104.0/21` 有没有被封，再查证书和 well-known 元数据 |
 | 磁盘或内存告警 | 先看备份目录大小和 `releases/` 数量；内存看 `MemoryCurrent` 和 swap |
+
+## 10. Cloudflare 代理选择与只读复验
+
+本次采用灰云方案：仅将 `nbd.dkz12345.com` 对应的 A 记录切为「仅 DNS」，保持源站 `20.48.14.96` 与 TTL，不改其他子域名。操作前核对同名 AAAA/CNAME，操作后使用 DoH 与 HTTPS 响应复验；未确认成功前，不把橙云现状写成已切换。回滚为恢复该记录原来的代理状态。
+
+灰云下 TLS 在自己的 nginx 终止，应用只信任回环 nginx。nginx 覆盖 `X-Forwarded-For`、`X-Real-IP`、`X-Forwarded-Host` 与协议，清空 `Forwarded`；不接受外部传来的客户端 IP。阶段 4 发布后，HSTS 由 nginx 的 `always` 响应头统一提供，并隐藏应用上游同名头。暂不在操作记录显示 IP，也不自动启用 fail2ban 新 jail。
+
+服务器只读检查：通过现有 SSH 执行 `scripts/server-readonly.sh`，stdin 方式传输时显式设置 `NBD_READONLY_APP_ROOT=/opt/apps/nbd/current`。只输出服务状态、资源和数据库汇总，包含历史快照与下一版本（包括当前记录）完全相同的修订数量。已有空修订保留，不删除或隐藏。
+
+旧 `.work/server-verify.sh` 会启动备份并进行恢复演练，旧 `.work/live-verify.mjs` 会写入虚构记录并退出全部会话；两者均不能当作只读检查运行。
 
 ## 附录 A：`/etc/nbd.env`
 
@@ -282,10 +292,10 @@ server {
     listen 80;
     listen [::]:80;
     server_name nbd.dkz12345.com;
+    access_log /var/log/nginx/nbd.access.log nbd_noquery;
     location ^~ /.well-known/acme-challenge/ { root /var/www/letsencrypt; }
-    location / { return 301 https://$host$request_uri; }
+    location / { return 301 https://nbd.dkz12345.com$request_uri; }
 }
-
 server {
     listen 443 ssl;
     listen [::]:443 ssl;
@@ -297,22 +307,7 @@ server {
     access_log /var/log/nginx/nbd.access.log nbd_noquery;
     error_log /var/log/nginx/nbd.error.log warn;
     add_header Strict-Transport-Security "max-age=31536000" always;
-
     location ^~ /.well-known/acme-challenge/ { root /var/www/letsencrypt; }
-
-    # MCP：JSON 响应，不需要关闭缓冲，只放宽超时
-    location ~ ^/mcp(?:/|$) {
-        proxy_pass http://127.0.0.1:3230;
-        proxy_http_version 1.1;
-        proxy_set_header Host $host;
-        proxy_set_header X-Forwarded-Proto $scheme;
-        proxy_set_header X-Forwarded-For $remote_addr;
-        proxy_set_header Connection "";
-        proxy_read_timeout 180s;
-        proxy_send_timeout 180s;
-    }
-
-    # 网页、API、OAuth、well-known 元数据
     location / {
         proxy_pass http://127.0.0.1:3230;
         proxy_http_version 1.1;
@@ -320,8 +315,12 @@ server {
         proxy_set_header X-Forwarded-Host $host;
         proxy_set_header X-Forwarded-Proto $scheme;
         proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header Forwarded "";
         proxy_set_header Connection "";
-        proxy_read_timeout 60s;
+        proxy_hide_header Strict-Transport-Security;
+        proxy_read_timeout 180s;
+        proxy_send_timeout 180s;
     }
 }
 ```
@@ -379,3 +378,10 @@ ignoreip = 127.0.0.1/8 ::1 160.79.104.0/21
 |---|---|---|---|---|---|
 | 2026-__-__ | 首次部署 | `<release>` / `<commit>` | readyz ✓ / MCP 401 ✓ / 元数据 ✓ | `<部署前备份>` | |
 | 2026-__-__ | 恢复演练 | — | 恢复到空目录 ✓ / 校验 ✓ / 只读启动 ✓ | `<备份 ID>` | |
+
+| 2026-10-11 | 阶段 1 OAuth 修复 | `5affb7c` | 隔离 check 37/37；假客户端浏览器回调及换码通过；服务器 readyz/TLS 通过 | `2026-10-11T13-23-51-741Z` | 同意后部署；真实 claude.ai/手机/ChatGPT 尚待账号验收 |
+| 2026-10-11 | 阶段 2 修订修复 | `a75a49a` | 隔离 check 45/45；浏览器原样保存不生成修订、冲突重载保留非重叠草稿、第 1 版显示「记下」 | 不涉及 | 本地验证通过，待发布前后端 |
+| 2026-10-11 | 阶段 3 协议与体验 | `0c40c6b` | 隔离 check 56/56；OAuth 状态/校验顺序、匿名失败审计及前端逻辑测试通过 | 不涉及 | 本地验证通过，待发布前后端 |
+| 2026-10-11 | 阶段 4 运维与测试 | 见本条所在 Git 提交 | 完整 check 65/65；12 个 JSON 示例校验通过；重新生成契约无差异；运维回归 4/4（含遗留回滚链接） | 不涉及 | 本地验证通过，待批准发布；数据库和契约未变 |
+| 2026-10-11 | 服务器只读汇总 | 线上 `5affb7c` | nbd/nginx active；SQLite quick_check=ok；3 条记录、0 条修订；相邻相同快照/空修订/未换码授权均为 0；磁盘占用 14% | 未执行写操作 | 仅汇总，不打印正文，保留现有数据 |
+| 2026-10-11 | Cloudflare 灰云 | DNS 配置 | 单条 A 记录保存成功；DoH=20.48.14.96；源站证书校验和 readyz 200 | 不涉及 | 经所有者在保存步骤批准；其他子域名不变 |

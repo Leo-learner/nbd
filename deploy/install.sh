@@ -14,6 +14,23 @@ previous_frontend=""
 if [[ -d "$base/current" ]]; then previous=$(readlink -f "$base/current"); fi
 if [[ -d "$base/frontend" ]]; then previous_frontend=$(readlink -f "$base/frontend"); fi
 staging=$(mktemp -d /tmp/nbd-install.XXXXXX)
+switch_link() {
+  node --input-type=module - "$1" "$2" <<'SWITCH_JS'
+import { mkdtempSync, realpathSync, renameSync, rmSync, statSync, symlinkSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+const [target, destination] = process.argv.slice(2);
+if (!statSync(target).isDirectory()) throw new Error('Release target is not a directory');
+const temporary = mkdtempSync(join(dirname(destination), '.nbd-switch-'));
+try {
+  const link = join(temporary, 'link');
+  symlinkSync(target, link);
+  renameSync(link, destination);
+  if (realpathSync(destination) !== realpathSync(target)) throw new Error('Release switch target mismatch');
+} finally {
+  rmSync(temporary, { recursive: true, force: true });
+}
+SWITCH_JS
+}
 previous_site=""
 previous_env=""
 if [[ -f $site ]]; then cp -a "$site" "$staging/site.previous"; previous_site="$staging/site.previous"; fi
@@ -23,14 +40,12 @@ rollback() {
   trap - ERR
   set +e
   if [[ -n $previous ]]; then
-    ln -s "$previous" "$base/current.rollback"
-    mv -Tf "$base/current.rollback" "$base/current"
+    switch_link "$previous" "$base/current" || { printf 'Backend rollback link could not be restored.\n' >&2; exit "$status"; }
   else
     rm -f "$base/current"
   fi
   if [[ -n $previous_frontend ]]; then
-    ln -s "$previous_frontend" "$base/frontend.rollback"
-    mv -Tf "$base/frontend.rollback" "$base/frontend"
+    switch_link "$previous_frontend" "$base/frontend" || { printf 'Frontend rollback link could not be restored.\n' >&2; exit "$status"; }
   elif [[ -L "$base/frontend" ]]; then
     rm -f "$base/frontend"
   fi
@@ -66,14 +81,12 @@ systemctl stop nbd 2>/dev/null || true
 install -m 644 "$release/deploy/nbd.service" /etc/systemd/system/nbd.service
 install -m 644 "$release/deploy/nbd-backup.service" /etc/systemd/system/nbd-backup.service
 install -m 644 "$release/deploy/nbd-backup.timer" /etc/systemd/system/nbd-backup.timer
-ln -s "$release" "$base/current.next"
-mv -Tf "$base/current.next" "$base/current"
+switch_link "$release" "$base/current"
 if [[ -z $previous_frontend ]]; then
   install -d -m 755 "$base/frontend-releases/initial"
   cp "$release/public/index.html" "$base/frontend-releases/initial/index.html"
   chmod 644 "$base/frontend-releases/initial/index.html"
-  ln -s "$base/frontend-releases/initial" "$base/frontend.next"
-  mv -Tf "$base/frontend.next" "$base/frontend"
+  switch_link "$base/frontend-releases/initial" "$base/frontend"
 fi
 systemctl daemon-reload
 systemctl enable --now nbd nbd-backup.timer
@@ -109,6 +122,9 @@ for attempt in {1..30}; do
 done
 if [[ $tls_ready != true ]]; then echo 'Dedicated HTTPS site did not become ready' >&2; false; fi
 [[ $(curl -s --resolve nbd.dkz12345.com:443:127.0.0.1 -o /dev/null -w '%{http_code}' -X POST https://nbd.dkz12345.com/mcp) == 401 ]]
+if ! bash "$release/deploy/prune-releases.sh" "$base/releases" "$release" "$previous"; then
+  printf 'Warning: release cleanup failed; the healthy deployment remains active.\n' >&2
+fi
 trap - ERR
 rm -f "$archive"
 rm -rf "$staging"

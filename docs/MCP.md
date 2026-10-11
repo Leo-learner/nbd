@@ -332,7 +332,7 @@ ChatGPT 优先用 CIMD（client_id 为 `https://chatgpt.com/oauth/client.json`�
 - **审计**：每次工具调用先写一条 `running`，结束时改成 `success` 或 `error`（带错误码）。`action` 用「资源.动作」，例如 `moment.record`、`moment.correct`、`note.create`、`reflection.create`、`review.snooze`、`lesson.create`；只读工具记为 `moment.read`、`moment.search` 等。**不记录参数和正文**。在网页「设置 → 操作记录」里按来源（MCP/OAuth）查看。
 - **限流**（按令牌计，不按 IP；云端连接器共用出口 IP）：
   - 每个令牌每分钟 120 个请求，`record_moment` 每小时 30 次；
-  - `/oauth/authorize` 的提交按 IP 每分钟 10 次，`/oauth/token` 当前也按 IP 每分钟 60 次（Fastify 默认键），并非按 client_id。橙云未切换前会聚合到 Cloudflare 出口地址。
+  - `/oauth/authorize` 的提交按 IP 每分钟 10 次，`/oauth/token` 当前也按 IP 每分钟 60 次（Fastify 默认键），并非按 client_id。NBD 已于 2026-10-11 改为灰云；若以后启用未经真实 IP 加固的代理，限流会聚合到代理出口地址。
   - 超出返回 429 / `RATE_LIMITED`。
 
 | 现象 | 原因与处理 |
