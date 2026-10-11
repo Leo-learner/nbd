@@ -498,6 +498,7 @@ function App() {
               <Button
                 tone="quiet"
                 aria-label={match ? "更多操作" : "打开菜单"}
+                aria-expanded={menu}
                 onClick={() => setMenu(true)}
               >
                 <Icon name="menu" />

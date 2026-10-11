@@ -3161,6 +3161,9 @@ label svg,
   gap: 4px;
   margin: 12px 0;
 }
+.metric-card .metric-number {
+  font-size: clamp(40px, 5vw, 58px);
+}
 .metric-number small {
   font-size: 20px;
 }

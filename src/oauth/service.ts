@@ -7,6 +7,7 @@ import { AuditService } from "../modules/audit.js";
 import { ownerPrincipal } from "../modules/principal.js";
 import { digest, sameDigest } from "../domain/fingerprint.js";
 import { DAY } from "../time.js";
+import { AppError } from "../errors.js";
 export class OAuthError extends Error {
   constructor(
     public code: string,
@@ -237,6 +238,7 @@ export class OAuthService {
     body: Row,
     csrfCookie: string | undefined,
     sessionToken?: string,
+    context?: { requestId: string; ip: string },
   ): Promise<{ redirect: string; session?: string }> {
     const r = this.consentRequest(body, csrfCookie);
     if (!["approve", "deny"].includes(body.decision))
@@ -258,8 +260,26 @@ export class OAuthService {
         body.password.length > 128
       )
         error("invalid_request", "Login credentials are required");
-      user = await this.auth.login(body.username, body.password);
-      session = this.auth.issue(user.id, sessionToken);
+      const loginAudit = this.audit.start(
+        null,
+        "oauth.login",
+        "oauth",
+        context?.requestId,
+        context?.ip,
+      );
+      try {
+        user = await this.auth.login(body.username, body.password);
+        session = this.auth.issue(user.id, sessionToken);
+        this.audit.attachUser(loginAudit, user.id);
+        this.audit.finish(loginAudit, "success");
+      } catch (e) {
+        this.audit.finish(
+          loginAudit,
+          "error",
+          e instanceof AppError ? e.code : "INTERNAL_ERROR",
+        );
+        throw e;
+      }
     }
     const requested = JSON.parse(r.scopes_json) as string[],
       scopes = requested.filter((s) => body[s] === "1");
@@ -361,12 +381,12 @@ export class OAuthService {
     };
   }
   token(body: Row): Row {
-    if (body.resource !== this.resource)
-      error("invalid_target", "Invalid resource");
-    if (typeof body.client_id !== "string")
-      error("invalid_client", "Client ID is required");
     if (!["authorization_code", "refresh_token"].includes(body.grant_type))
       error("unsupported_grant_type", "Unsupported grant type");
+    if (typeof body.client_id !== "string")
+      error("invalid_client", "Client ID is required");
+    if (body.resource !== this.resource)
+      error("invalid_target", "Invalid resource");
     const outcome = this.db
       .transaction(() => {
         const now = this.config.now(),

@@ -90,7 +90,11 @@ export class DataService {
   }
   audit(p: Principal, q: Row): Row {
     this.moments.read(p);
-    const where = ["user_id=@user"],
+    // This installation has exactly one owner. Anonymous authentication
+    // failures belong in that owner's audit view, never arbitrary events.
+    const where = [
+        "(user_id=@user OR (user_id IS NULL AND actor_kind='anonymous' AND status='error' AND action IN ('auth.login','oauth.login')))",
+      ],
       params: Row = { user: p.userId };
     if (q.channel) {
       where.push("channel=@channel");

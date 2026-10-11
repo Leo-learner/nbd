@@ -46,6 +46,11 @@ import {
   label,
 } from "../shared";
 import type { operations } from "../../../sdk/generated";
+import { firstPointPerTrendDay } from "../trend";
+import {
+  deleteStagedLessonIfPresent,
+  reflectionStatusCopyKind,
+} from "../reflection";
 
 type ListResponse = ResponseOf<"listMoments">;
 type RevisionResponse = ResponseOf<"listMomentRevisions">;
@@ -660,6 +665,7 @@ function IntensityChart({
     x: 24 + (Math.max(0, point.dayOffset) / maxDay) * 312,
     y: 126 - point.intensity * 10.8,
   }));
+  const labelPoints = firstPointPerTrendDay(points);
   const polyline = points.map((point) => `${point.x},${point.y}`).join(" ");
   return (
     <div className="intensity-chart-wrap">
@@ -695,15 +701,18 @@ function IntensityChart({
                   : "plot-point plot-point-reflection"
               }
             />
-            <text
-              x={point.x}
-              y="145"
-              textAnchor="middle"
-              className="plot-axis-label"
-            >
-              {point.dayOffset === 0 ? "当天" : `第${point.dayOffset}天`}
-            </text>
           </g>
+        ))}
+        {labelPoints.map((point) => (
+          <text
+            key={`day-${point.dayOffset}`}
+            x={point.x}
+            y="145"
+            textAnchor="middle"
+            className="plot-axis-label"
+          >
+            {point.dayOffset === 0 ? "当天" : `第${point.dayOffset}天`}
+          </text>
         ))}
       </svg>
       <div className="plot-legend">
@@ -1994,6 +2003,12 @@ type ReflectDraft = {
   lessonIds: string[];
 };
 
+type StagedLesson = {
+  idempotencyKey: string;
+  title: string;
+  createdId?: string;
+};
+
 function reflectDraft(
   moment: MomentDetail,
   reflection?: Reflection,
@@ -2047,13 +2062,25 @@ function ReflectPageContent({ id }: { id: string }) {
   const [lessonSearch, setLessonSearch] = useState("");
   const [lessonQuery, setLessonQuery] = useState("");
   const [newLessonTitle, setNewLessonTitle] = useState("");
-  const [creatingLesson, setCreatingLesson] = useState(false);
+  const [stagedLessons, setStagedLessons] = useState<StagedLesson[]>([]);
+  const [saveOutcomeUnknown, setSaveOutcomeUnknown] = useState(false);
   const [lessonError, setLessonError] = useState<unknown>();
   const [knownLessons, setKnownLessons] = useState<Record<string, string>>({});
   const [guardPending, setGuardPending] = useState(false);
-  const dirty = Boolean(draft && JSON.stringify(draft) !== initial);
+  const uncertainReflectionFingerprint = useRef<string | null>(null);
+  const reflectionIdempotencyKeys = useRef(
+    new Map<string, ReturnType<typeof idempotency>>(),
+  );
+  const dirty = Boolean(
+    draft &&
+      (JSON.stringify(draft) !== initial ||
+        stagedLessons.length > 0 ||
+        newLessonTitle.trim()),
+  );
   const dirtyRef = useRef(dirty);
   dirtyRef.current = dirty;
+  const lessonSelectionCount =
+    (draft?.lessonIds.length ?? 0) + stagedLessons.length;
   const editing = editId
     ? moment?.reflections.find((reflection) => reflection.id === editId)
     : undefined;
@@ -2082,6 +2109,18 @@ function ReflectPageContent({ id }: { id: string }) {
     const timer = window.setTimeout(() => setLessonQuery(lessonSearch), 250);
     return () => window.clearTimeout(timer);
   }, [lessonSearch]);
+  const cleanupStagedLessons = async () => {
+    for (const staged of stagedLessons) {
+      if (staged.createdId)
+        await deleteStagedLessonIfPresent(staged.createdId, (lessonId) =>
+          api("DELETE", `/lessons/${encodeURIComponent(lessonId)}`),
+        );
+      setStagedLessons((current) =>
+        current.filter((item) => item.idempotencyKey !== staged.idempotencyKey),
+      );
+    }
+    setStagedLessons([]);
+  };
   useEffect(() => {
     const beforeUnload = (event: BeforeUnloadEvent) => {
       if (!dirtyRef.current) return;
@@ -2100,11 +2139,25 @@ function ReflectPageContent({ id }: { id: string }) {
       ).detail;
       if (!detail?.cancel || !detail?.resume) return;
       detail.cancel();
+      if (busy || saveOutcomeUnknown) {
+        setErrorForm(
+          new Error(
+            busy
+              ? "复盘还在保存，请等保存结果出来后再离开。"
+              : "上次保存结果还没确认，请按相同内容重试后再离开。",
+          ),
+        );
+        return;
+      }
       setGuardPending(true);
       void confirm("离开这页？", "复盘还没有保存。离开后这次填写的内容会丢失。")
         .then(async (accepted) => {
-          if (accepted) await detail.resume();
+          if (!accepted) return;
+          await cleanupStagedLessons();
+          dirtyRef.current = false;
+          await detail.resume();
         })
+        .catch((caught) => setErrorForm(caught))
         .finally(() => setGuardPending(false));
     };
     window.addEventListener("beforeunload", beforeUnload);
@@ -2113,7 +2166,7 @@ function ReflectPageContent({ id }: { id: string }) {
       window.removeEventListener("beforeunload", beforeUnload);
       window.removeEventListener("nbd-before-navigate", beforeNavigate);
     };
-  }, [confirm, guardPending]);
+  }, [busy, cleanupStagedLessons, confirm, guardPending, saveOutcomeUnknown]);
 
   const updateDraft = <K extends keyof ReflectDraft>(
     key: K,
@@ -2134,7 +2187,7 @@ function ReflectPageContent({ id }: { id: string }) {
   const toggleLesson = (lesson: { id: string; title: string }) => {
     if (!draft) return;
     const has = draft.lessonIds.includes(lesson.id);
-    if (!has && draft.lessonIds.length >= meta.limits.lessonIdsMax) return;
+    if (!has && lessonSelectionCount >= meta.limits.lessonIdsMax) return;
     updateDraft(
       "lessonIds",
       has
@@ -2143,35 +2196,45 @@ function ReflectPageContent({ id }: { id: string }) {
     );
     setKnownLessons((current) => ({ ...current, [lesson.id]: lesson.title }));
   };
-  const createLesson = async () => {
+  const stageLesson = () => {
     if (!moment || !newLessonTitle.trim() || !draft) return;
-    if (draft.lessonIds.length >= meta.limits.lessonIdsMax) {
+    if (lessonSelectionCount >= meta.limits.lessonIdsMax) {
       setLessonError(
         new Error(`最多关联 ${meta.limits.lessonIdsMax} 条经验。`),
       );
       return;
     }
-    setCreatingLesson(true);
     setLessonError(undefined);
-    try {
-      const created = await api<CreateLessonResponse>(
-        "POST",
-        "/lessons",
-        { title: newLessonTitle.trim() },
-        idempotency(),
-      );
-      setKnownLessons((current) => ({
-        ...current,
-        [created.id]: created.title,
-      }));
-      updateDraft("lessonIds", [...draft.lessonIds, created.id]);
-      setNewLessonTitle("");
-      notify("经验已创建并关联");
-    } catch (caught) {
-      setLessonError(caught);
-    } finally {
-      setCreatingLesson(false);
+    setStagedLessons((current) => [
+      ...current,
+      {
+        idempotencyKey: crypto.randomUUID(),
+        title: newLessonTitle.trim(),
+      },
+    ]);
+    setNewLessonTitle("");
+    notify("已暂存，保存复盘时才会创建并关联");
+  };
+  const removeStagedLesson = async (idempotencyKey: string) => {
+    if (busy || saveOutcomeUnknown) return;
+    const staged = stagedLessons.find(
+      (item) => item.idempotencyKey === idempotencyKey,
+    );
+    if (!staged) return;
+    if (staged.createdId) {
+      try {
+        await deleteStagedLessonIfPresent(staged.createdId, (lessonId) =>
+          api("DELETE", `/lessons/${encodeURIComponent(lessonId)}`),
+        );
+      } catch (caught) {
+        setLessonError(caught);
+        return;
+      }
     }
+    setLessonError(undefined);
+    setStagedLessons((current) =>
+      current.filter((item) => item.idempotencyKey !== idempotencyKey),
+    );
   };
   const save = async (event: FormEvent) => {
     event.preventDefault();
@@ -2183,7 +2246,7 @@ function ReflectPageContent({ id }: { id: string }) {
     }
     if (
       draft.thinkingTraps.length > meta.limits.trapsMax ||
-      draft.lessonIds.length > meta.limits.lessonIdsMax
+      lessonSelectionCount > meta.limits.lessonIdsMax
     ) {
       setErrorForm(new Error("选择数量超过限制。"));
       return;
@@ -2221,28 +2284,102 @@ function ReflectPageContent({ id }: { id: string }) {
         draft.thinkingTraps as CreateReflectionBody["thinkingTraps"],
       lessonIds: draft.lessonIds,
     };
+    if (uncertainReflectionFingerprint.current) {
+      const createdIds = stagedLessons.map((item) => item.createdId);
+      const retryBody = {
+        ...body,
+        lessonIds: [...draft.lessonIds, ...createdIds.filter(Boolean)] as string[],
+      };
+      if (
+        createdIds.some((createdId) => !createdId) ||
+        JSON.stringify(retryBody) !== uncertainReflectionFingerprint.current
+      ) {
+        setErrorForm(
+          new Error(
+            "上次保存结果还没确认。请恢复原内容并重试，避免重复保存。",
+          ),
+        );
+        return;
+      }
+    }
     setBusy(true);
+    let reflectionFingerprint: string | undefined;
     try {
-      if (editing) await api("PATCH", `/reflections/${editing.id}`, body);
-      else
+      let currentStaged = [...stagedLessons];
+      for (let index = 0; index < currentStaged.length; index += 1) {
+        const staged = currentStaged[index];
+        if (staged.createdId) continue;
+        const created = await api<CreateLessonResponse>(
+          "POST",
+          "/lessons",
+          { title: staged.title, momentIds: [moment.id] },
+          { "Idempotency-Key": staged.idempotencyKey },
+        );
+        currentStaged = currentStaged.map((item) =>
+          item.idempotencyKey === staged.idempotencyKey
+            ? { ...item, createdId: created.id }
+            : item,
+        );
+        setStagedLessons(currentStaged);
+        setKnownLessons((current) => ({
+          ...current,
+          [created.id]: created.title,
+        }));
+      }
+      const savedBody = {
+        ...body,
+        lessonIds: [
+          ...draft.lessonIds,
+          ...currentStaged.map((item) => item.createdId!),
+        ],
+      };
+      reflectionFingerprint = JSON.stringify(savedBody);
+      if (editing) await api("PATCH", `/reflections/${editing.id}`, savedBody);
+      else {
+        let headers = reflectionIdempotencyKeys.current.get(
+          reflectionFingerprint,
+        );
+        if (!headers) {
+          headers = idempotency();
+          reflectionIdempotencyKeys.current.set(reflectionFingerprint, headers);
+        }
         await api(
           "POST",
           `/moments/${moment.id}/reflections`,
-          body,
-          idempotency(),
+          savedBody,
+          headers,
         );
+      }
+      uncertainReflectionFingerprint.current = null;
+      setSaveOutcomeUnknown(false);
       dirtyRef.current = false;
-      setDraft({ ...draft });
-      setInitial(JSON.stringify(draft));
+      setDraft({ ...draft, lessonIds: savedBody.lessonIds });
+      setInitial(JSON.stringify({ ...draft, lessonIds: savedBody.lessonIds }));
+      setStagedLessons([]);
       notify(editing ? "复盘修改已保存" : "复盘已保存");
       navigate(`/moments/${moment.id}`);
     } catch (caught) {
+      if (caught instanceof ApiError && caught.status === 0) {
+        setSaveOutcomeUnknown(true);
+        if (reflectionFingerprint)
+          uncertainReflectionFingerprint.current = reflectionFingerprint;
+      } else if (caught instanceof ApiError) {
+        setSaveOutcomeUnknown(false);
+        uncertainReflectionFingerprint.current = null;
+      }
       setErrorForm(caught);
     } finally {
       setBusy(false);
     }
   };
   const cancel = async () => {
+    if (busy) return;
+    if (saveOutcomeUnknown) {
+      setErrorForm(
+        new Error("上次保存结果还没确认，请按相同内容重试后再离开。"),
+      );
+      return;
+    }
     if (
       dirty &&
       !(await confirm(
@@ -2251,6 +2388,12 @@ function ReflectPageContent({ id }: { id: string }) {
       ))
     )
       return;
+    try {
+      await cleanupStagedLessons();
+    } catch (caught) {
+      setErrorForm(caught);
+      return;
+    }
     dirtyRef.current = false;
     if (draft) setInitial(JSON.stringify(draft));
     if (moment) navigate(`/moments/${moment.id}`);
@@ -2269,6 +2412,32 @@ function ReflectPageContent({ id }: { id: string }) {
     meta,
   );
   const difference = moment.intensity - draft.intensityNow;
+  const latestReflection = moment.reflections.at(-1);
+  const editorLocked = busy || saveOutcomeUnknown;
+  const statusCopyKind =
+    draft.resolution || moment.status === "archived"
+      ? reflectionStatusCopyKind({
+          originalStatus: moment.status,
+          resolution: draft.resolution,
+          latestResolution: moment.latestResolution,
+          changesLatestResolution:
+            !editing || latestReflection?.id === editing.id,
+          editableUntil: Date.parse(moment.editableUntil),
+          now: Date.now(),
+        })
+      : undefined;
+  const saveStatusCopy =
+    statusCopyKind === "archived"
+      ? draft.resolution
+        ? `这条记录原本已归档，保存后仍会保持归档；本次结论是「${label(meta, "resolution", draft.resolution)}」。`
+        : "这条记录原本已归档，保存复盘后仍会保持归档。"
+      : statusCopyKind === "settled"
+        ? "保存后会标为「已释怀」。"
+        : statusCopyKind === "fresh"
+          ? `保存后仍会显示「刚记下」，直到 ${instant(moment.editableUntil, user.timezone)} 后才会显示「已回看」。`
+          : statusCopyKind === "reflected"
+            ? "保存后会标为「已回看」。以后想起来可以再写一次。"
+            : "先选一个结论，保存后的状态说明会随选择更新。";
   return (
     <div className="page-shell reflect-page">
       <div className="reflect-topbar">
@@ -2333,6 +2502,7 @@ function ReflectPageContent({ id }: { id: string }) {
             <input
               className="reflect-range"
               type="range"
+              disabled={editorLocked}
               min="0"
               max="10"
               step="1"
@@ -2347,6 +2517,7 @@ function ReflectPageContent({ id }: { id: string }) {
                 <button
                   key={value}
                   type="button"
+                  disabled={editorLocked}
                   className={draft.intensityNow === value ? "scale-active" : ""}
                   aria-pressed={draft.intensityNow === value}
                   onClick={() => updateDraft("intensityNow", value)}
@@ -2365,6 +2536,7 @@ function ReflectPageContent({ id }: { id: string }) {
               {meta.enums.resolution.map((item) => (
                 <button
                   type="button"
+                  disabled={editorLocked}
                   key={item.key}
                   className={`choice-card ${draft.resolution === item.key ? "selected-choice" : ""}`}
                   aria-pressed={draft.resolution === item.key}
@@ -2386,6 +2558,7 @@ function ReflectPageContent({ id }: { id: string }) {
                 {meta.enums.fearCameTrue.map((item) => (
                   <button
                     type="button"
+                    disabled={editorLocked}
                     key={item.key}
                     className={`choice-card ${draft.fearCameTrue === item.key ? "selected-choice" : ""}`}
                     aria-pressed={draft.fearCameTrue === item.key}
@@ -2411,6 +2584,7 @@ function ReflectPageContent({ id }: { id: string }) {
             </p>
             <input
               type="range"
+              disabled={editorLocked}
               min="0"
               max="10"
               step="1"
@@ -2423,6 +2597,7 @@ function ReflectPageContent({ id }: { id: string }) {
             <div className="range-scale">
               <button
                 type="button"
+                disabled={editorLocked}
                 onClick={() => updateDraft("severityNow", "")}
               >
                 留空
@@ -2430,6 +2605,7 @@ function ReflectPageContent({ id }: { id: string }) {
               {Array.from({ length: 11 }, (_, value) => (
                 <button
                   type="button"
+                  disabled={editorLocked}
                   key={value}
                   className={
                     draft.severityNow === String(value) ? "scale-active" : ""
@@ -2445,6 +2621,7 @@ function ReflectPageContent({ id }: { id: string }) {
             <label className="form-field">
               <span>后来实际发生了什么？</span>
               <textarea
+                disabled={editorLocked}
                 rows={4}
                 maxLength={meta.limits.whatHappenedMax}
                 value={draft.whatHappened}
@@ -2458,6 +2635,7 @@ function ReflectPageContent({ id }: { id: string }) {
               <span>现在怎么看这件事？</span>
               <textarea
                 className="reflect-perspective"
+                disabled={editorLocked}
                 rows={5}
                 maxLength={meta.limits.perspectiveMax}
                 value={draft.perspective}
@@ -2484,8 +2662,9 @@ function ReflectPageContent({ id }: { id: string }) {
                     type="button"
                     className={`choice-card ${selected ? "selected-choice" : ""} ${!selected && draft.thinkingTraps.length >= meta.limits.trapsMax ? "choice-disabled" : ""}`}
                     disabled={
-                      !selected &&
-                      draft.thinkingTraps.length >= meta.limits.trapsMax
+                      editorLocked ||
+                      (!selected &&
+                        draft.thinkingTraps.length >= meta.limits.trapsMax)
                     }
                     aria-pressed={selected}
                     key={item.key}
@@ -2502,13 +2681,14 @@ function ReflectPageContent({ id }: { id: string }) {
             <div className="section-heading">
               <h2>关联经验</h2>
               <span>
-                已关联 {draft.lessonIds.length}/{meta.limits.lessonIdsMax}
+                已选 {lessonSelectionCount}/{meta.limits.lessonIdsMax}
               </span>
             </div>
             <label className="form-field">
               <span>搜索经验</span>
               <input
                 type="search"
+                disabled={editorLocked}
                 value={lessonSearch}
                 onChange={(event) => setLessonSearch(event.target.value)}
                 placeholder="输入关键词查找经验"
@@ -2520,6 +2700,7 @@ function ReflectPageContent({ id }: { id: string }) {
                   key={lessonId}
                   type="button"
                   className="lesson-choice selected-choice"
+                  disabled={editorLocked}
                   onClick={() =>
                     updateDraft(
                       "lessonIds",
@@ -2531,20 +2712,43 @@ function ReflectPageContent({ id }: { id: string }) {
                   <span>已关联 · 移除</span>
                 </button>
               ))}
+              {stagedLessons.map((staged) => (
+                <button
+                  key={staged.idempotencyKey}
+                  type="button"
+                  className="lesson-choice selected-choice"
+                  disabled={editorLocked}
+                  onClick={() =>
+                    void removeStagedLesson(staged.idempotencyKey)
+                  }
+                >
+                  <span>{staged.title}</span>
+                  <span>
+                    {staged.createdId ? "待保存 · 移除" : "待创建 · 移除"}
+                  </span>
+                </button>
+              ))}
               {lessonState.loading ? (
                 <small>正在搜索经验…</small>
               ) : lessonState.error ? (
                 <FormError error={lessonState.error} />
               ) : (
                 lessons
-                  .filter((lesson) => !draft.lessonIds.includes(lesson.id))
+                  .filter(
+                    (lesson) =>
+                      !draft.lessonIds.includes(lesson.id) &&
+                      !stagedLessons.some(
+                        (staged) => staged.createdId === lesson.id,
+                      ),
+                  )
                   .map((lesson) => (
                     <button
                       key={lesson.id}
                       type="button"
                       className="lesson-choice"
                       disabled={
-                        draft.lessonIds.length >= meta.limits.lessonIdsMax
+                        editorLocked ||
+                        lessonSelectionCount >= meta.limits.lessonIdsMax
                       }
                       onClick={() => toggleLesson(lesson)}
                     >
@@ -2562,33 +2766,32 @@ function ReflectPageContent({ id }: { id: string }) {
                 <span>新建一条经验</span>
                 <input
                   value={newLessonTitle}
+                  disabled={editorLocked}
                   maxLength={meta.limits.lessonTitleMax}
                   onChange={(event) => setNewLessonTitle(event.target.value)}
                   placeholder="给这条经验起个标题"
                 />
               </label>
               <Button
-                onClick={createLesson}
+                onClick={stageLesson}
                 disabled={
-                  creatingLesson ||
+                  editorLocked ||
                   !newLessonTitle.trim() ||
-                  draft.lessonIds.length >= meta.limits.lessonIdsMax
+                  lessonSelectionCount >= meta.limits.lessonIdsMax
                 }
               >
-                {creatingLesson ? "正在创建…" : "创建并关联"}
+                暂存并关联
               </Button>
               <FormError error={lessonError} />
             </div>
           </section>
           <FormError error={errorForm} />
           <div className="dirty-bar">
-            <p>
-              {draft.resolution === "let_go"
-                ? "保存后，这件事会标为「已释怀」。"
-                : "保存后，这件事会标为「已回看」。以后想起来可以再写一次。"}
-            </p>
+            <p>{saveStatusCopy}</p>
             <div className="actions">
-              <Button onClick={cancel}>取消</Button>
+              <Button disabled={busy || saveOutcomeUnknown} onClick={cancel}>
+                {saveOutcomeUnknown ? "请先重试保存" : "取消"}
+              </Button>
               <Button tone="primary" type="submit" disabled={busy}>
                 {busy ? "正在保存…" : editing ? "保存修改" : "保存复盘"}
               </Button>
