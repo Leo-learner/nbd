@@ -20,6 +20,16 @@ import {
   type ResponseOf,
 } from "../api";
 import {
+  applyConflictChoice,
+  buildPatch,
+  changedSnapshotFields,
+  rebaseDraft,
+  versionProvenance,
+  type EditDraft,
+  type EditMergeGroup,
+  type MomentSnapshot,
+} from "../editing";
+import {
   Button,
   Card,
   EmptyState,
@@ -36,11 +46,15 @@ import {
   label,
 } from "../shared";
 import type { operations } from "../../../sdk/generated";
+import { firstPointPerTrendDay } from "../trend";
+import {
+  deleteStagedLessonIfPresent,
+  reflectionStatusCopyKind,
+} from "../reflection";
 
 type ListResponse = ResponseOf<"listMoments">;
 type RevisionResponse = ResponseOf<"listMomentRevisions">;
 type Revision = RevisionResponse["items"][number];
-type Snapshot = Revision["snapshot"];
 type Note = MomentDetail["notes"][number];
 type Reflection = MomentDetail["reflections"][number];
 type Lesson = MomentDetail["lessons"][number];
@@ -53,12 +67,10 @@ type RequestBody<K extends keyof operations> = operations[K] extends {
 }
   ? Body
   : never;
-type UpdateMomentBody = RequestBody<"updateMoment">;
 type CreateReflectionBody = RequestBody<"createReflection">;
 type UpdateReflectionBody = RequestBody<"updateReflection">;
-type Scene = UpdateMomentBody["scene"];
-type Precision = NonNullable<UpdateMomentBody["happenedAtPrecision"]>;
-type EmotionDraft = { key: string; intensity: string };
+type Snapshot = MomentSnapshot;
+type Precision = EditDraft["precision"];
 type FilterStatus =
   "" | "fresh" | "cooling" | "reflected" | "settled" | "archived";
 
@@ -653,6 +665,7 @@ function IntensityChart({
     x: 24 + (Math.max(0, point.dayOffset) / maxDay) * 312,
     y: 126 - point.intensity * 10.8,
   }));
+  const labelPoints = firstPointPerTrendDay(points);
   const polyline = points.map((point) => `${point.x},${point.y}`).join(" ");
   return (
     <div className="intensity-chart-wrap">
@@ -688,15 +701,18 @@ function IntensityChart({
                   : "plot-point plot-point-reflection"
               }
             />
-            <text
-              x={point.x}
-              y="145"
-              textAnchor="middle"
-              className="plot-axis-label"
-            >
-              {point.dayOffset === 0 ? "当天" : `第${point.dayOffset}天`}
-            </text>
           </g>
+        ))}
+        {labelPoints.map((point) => (
+          <text
+            key={`day-${point.dayOffset}`}
+            x={point.x}
+            y="145"
+            textAnchor="middle"
+            className="plot-axis-label"
+          >
+            {point.dayOffset === 0 ? "当天" : `第${point.dayOffset}天`}
+          </text>
         ))}
       </svg>
       <div className="plot-legend">
@@ -713,26 +729,6 @@ function IntensityChart({
     </div>
   );
 }
-
-type EditDraft = {
-  title: string;
-  narrative: string;
-  agentSummary: string;
-  precision: Precision;
-  happenedOn: string;
-  happenedLocal: string;
-  scene: string;
-  emotions: EmotionDraft[];
-  intensity: string;
-  severity: string;
-  fearedOutcome: string;
-  outcomeKnownBy: string;
-  thoughts: string;
-  bodySignals: string;
-  immediateResponse: string;
-  people: string[];
-  reason: string;
-};
 
 function makeEditDraft(detail: MomentDetail, timezone: string): EditDraft {
   return {
@@ -759,6 +755,54 @@ function makeEditDraft(detail: MomentDetail, timezone: string): EditDraft {
   };
 }
 
+function editGroupTitle(group: EditMergeGroup) {
+  if (group === "time") return "发生时间与日期";
+  return SNAPSHOT_FIELDS.find((field) => field.key === group)?.title ?? group;
+}
+
+function editGroupValue(
+  group: EditMergeGroup,
+  draft: EditDraft,
+  meta: ReturnType<typeof useApp>["meta"],
+  timezone: string,
+) {
+  if (group === "time")
+    return draft.precision === "exact"
+      ? `${draft.happenedLocal} · ${label(meta, "precision", "exact")}`
+      : `${draft.happenedOn} · ${label(meta, "precision", draft.precision)}`;
+  if (group === "emotions")
+    return (
+      draft.emotions
+        .map(
+          (item) =>
+            `${label(meta, "emotion", item.key)}${item.intensity.trim() ? ` ${item.intensity}` : ""}`,
+        )
+        .join(" · ") || "—"
+    );
+  if (group === "scene") return label(meta, "scene", draft.scene);
+  if (group === "people")
+    return draft.people.map((person) => person.trim()).filter(Boolean).join("、") || "—";
+  if (group === "intensity") return `${draft.intensity}/10`;
+  if (group === "severity")
+    return draft.severity.trim() ? `${draft.severity}/10` : "—";
+  if (group === "outcomeKnownBy")
+    return draft.outcomeKnownBy ? localDate(draft.outcomeKnownBy) : "—";
+  const value = draft[group];
+  return typeof value === "string" && value.trim() ? value : "—";
+}
+
+function snapshotGroupValue(
+  group: EditMergeGroup,
+  snapshot: Snapshot,
+  meta: ReturnType<typeof useApp>["meta"],
+  timezone: string,
+) {
+  if (group === "time")
+    return `${normalizeSnapshotValue("happenedAt", snapshot.happenedAt, meta, timezone)} · ${normalizeSnapshotValue("happenedAtPrecision", snapshot.happenedAtPrecision, meta, timezone)}`;
+  const field = group as keyof Snapshot;
+  return normalizeSnapshotValue(field, snapshot[field], meta, timezone);
+}
+
 function MomentEditor({
   detail,
   onClose,
@@ -769,6 +813,12 @@ function MomentEditor({
   onSaved: () => void;
 }) {
   const { meta, user, confirm, notify } = useApp();
+  const [baseDraft, setBaseDraft] = useState(() =>
+    makeEditDraft(detail, user.timezone),
+  );
+  const [baseSnapshot, setBaseSnapshot] = useState(() =>
+    currentSnapshot(detail),
+  );
   const [draft, setDraft] = useState(() =>
     makeEditDraft(detail, user.timezone),
   );
@@ -776,10 +826,21 @@ function MomentEditor({
   const [error, setError] = useState<unknown>();
   const [conflict, setConflict] = useState(false);
   const [expectedRevision, setExpectedRevision] = useState(detail.revision);
-  const [serverVersion, setServerVersion] = useState<MomentDetail | null>(null);
+  const [conflictInfo, setConflictInfo] = useState<{
+    serverVersion: MomentDetail;
+    serverFields: (keyof Snapshot)[];
+    overlaps: EditMergeGroup[];
+    mine: EditDraft;
+  } | null>(null);
+  const [mergeChoices, setMergeChoices] = useState<
+    Partial<Record<EditMergeGroup, "current" | "mine">>
+  >({});
   const update = <K extends keyof EditDraft>(key: K, value: EditDraft[K]) =>
     setDraft((current) => ({ ...current, [key]: value }));
   const frozen = Date.now() >= new Date(detail.editableUntil).getTime();
+  const needsMergeChoice = Boolean(
+    conflictInfo?.overlaps.some((field) => !mergeChoices[field]),
+  );
   const toggleEmotion = (key: string) => {
     setDraft((current) =>
       current.emotions.some((item) => item.key === key)
@@ -808,6 +869,28 @@ function MomentEditor({
       return;
     }
     if (
+      conflictInfo?.overlaps.some((field) => !mergeChoices[field])
+    ) {
+      setError(new Error("请先逐项选择重叠字段采用当前版本还是保留你的输入。"));
+      return;
+    }
+    let body;
+    try {
+      body = buildPatch(baseDraft, draft, expectedRevision, (value) =>
+        value.precision === "exact"
+          ? localDateTimeToISO(value.happenedLocal, user.timezone)
+          : value.happenedOn,
+      );
+    } catch (caught) {
+      setError(caught);
+      return;
+    }
+    if (!body) {
+      notify("没有改动，编辑窗口已关闭");
+      onClose();
+      return;
+    }
+    if (
       frozen &&
       !(await confirm(
         "这条记录已过更正期",
@@ -817,35 +900,6 @@ function MomentEditor({
       return;
     setBusy(true);
     try {
-      const body: UpdateMomentBody = {
-        expectedRevision,
-        reason: draft.reason.trim() || undefined,
-        title: draft.title.trim(),
-        narrative: draft.narrative,
-        agentSummary: draft.agentSummary.trim() || null,
-        happenedAt:
-          draft.precision === "exact"
-            ? localDateTimeToISO(draft.happenedLocal, user.timezone)
-            : draft.happenedOn,
-        happenedAtPrecision: draft.precision,
-        scene: draft.scene as Scene,
-        emotions: draft.emotions.map((item) => ({
-          key: item.key as NonNullable<
-            UpdateMomentBody["emotions"]
-          >[number]["key"],
-          ...(item.intensity.trim()
-            ? { intensity: Number(item.intensity) }
-            : {}),
-        })),
-        intensity: Number(draft.intensity),
-        severity: draft.severity.trim() ? Number(draft.severity) : null,
-        fearedOutcome: draft.fearedOutcome.trim() || null,
-        outcomeKnownBy: draft.outcomeKnownBy || null,
-        thoughts: draft.thoughts.trim() || null,
-        bodySignals: draft.bodySignals.trim() || null,
-        immediateResponse: draft.immediateResponse.trim() || null,
-        people: draft.people.map((person) => person.trim()).filter(Boolean),
-      };
       await api("PATCH", `/moments/${detail.id}`, body);
       notify("原始记录已更新");
       onSaved();
@@ -859,16 +913,71 @@ function MomentEditor({
   };
   const reloadConflict = async () => {
     try {
-      const current = await api<MomentDetail>("GET", `/moments/${detail.id}`);
-      // Keep the user's draft intact while rebasing the optimistic revision token.
+      let current: MomentDetail | null = null;
+      let history: RevisionResponse | null = null;
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        current = await api<MomentDetail>("GET", `/moments/${detail.id}`);
+        history = await api<RevisionResponse>(
+          "GET",
+          `/moments/${detail.id}/revisions`,
+        );
+        if (current.revision === history.current) break;
+      }
+      if (!current || !history || current.revision !== history.current)
+        throw new Error("记录还在变化，请稍后重新加载当前版本。");
+      const mine = { ...draft };
+      const latestDraft = makeEditDraft(current, user.timezone);
+      const latestSnapshot = currentSnapshot(current);
+      const serverFields = new Set(
+        [
+          ...history.items
+            .filter((item) => item.revision >= expectedRevision)
+            .flatMap((item) => item.changedFields),
+          ...changedSnapshotFields(baseSnapshot, latestSnapshot),
+        ],
+      );
+      const orderedServerFields = SNAPSHOT_FIELDS.map((field) => field.key).filter(
+        (field) => serverFields.has(field),
+      );
+      const rebased = rebaseDraft(
+        baseDraft,
+        mine,
+        latestDraft,
+        serverFields,
+      );
+      setBaseDraft(latestDraft);
+      setBaseSnapshot(latestSnapshot);
+      setDraft(rebased.draft);
       setExpectedRevision(current.revision);
-      setServerVersion(current);
+      setConflictInfo({
+        serverVersion: current,
+        serverFields: orderedServerFields,
+        overlaps: rebased.overlaps,
+        mine,
+      });
+      setMergeChoices({});
       setConflict(false);
       setError(undefined);
       notify(`已重新加载当前版本（第 ${current.revision} 版）；你的输入仍保留`);
     } catch (caught) {
       setError(caught);
     }
+  };
+  const chooseOverlap = (
+    field: EditMergeGroup,
+    choice: "current" | "mine",
+  ) => {
+    if (!conflictInfo) return;
+    setDraft((current) =>
+      applyConflictChoice(
+        current,
+        baseDraft,
+        conflictInfo.mine,
+        field,
+        choice,
+      ),
+    );
+    setMergeChoices((current) => ({ ...current, [field]: choice }));
   };
   const sceneOptions = meta.enums.scene;
   return (
@@ -1129,28 +1238,96 @@ function MomentEditor({
         {conflict && (
           <div className="conflict-panel">
             <p>
-              这条记录已经被另一处修改。你的输入仍保留；重新加载当前版本后可以检查并再次保存。
+              这条记录已经被另一处修改。重新加载后会保留互不冲突的输入；重叠字段需要你明确选择采用哪一方。
             </p>
             <Button onClick={reloadConflict}>重新加载当前版本</Button>
           </div>
         )}
-        {serverVersion && (
+        {conflictInfo && (
           <div className="conflict-panel">
-            <strong>当前版本：第 {serverVersion.revision} 版</strong>
-            <p>
-              <b>标题：</b>
-              {serverVersion.title}
-            </p>
-            <p className="narrative">
-              <b>原话：</b>
-              {serverVersion.narrative}
-            </p>
-            <small>你编辑中的字段仍保留在上方表单。确认合并后再保存。</small>
+            <strong>当前版本：第 {conflictInfo.serverVersion.revision} 版</strong>
+            {conflictInfo.serverFields.length > 0 ? (
+              <>
+                <p>
+                  对方修改的字段：
+                  {conflictInfo.serverFields
+                    .map(
+                      (key) =>
+                        SNAPSHOT_FIELDS.find((field) => field.key === key)
+                          ?.title ?? key,
+                    )
+                    .join("、")}
+                </p>
+                <div className="conflict-values">
+                  {conflictInfo.serverFields.map((key) => {
+                    const snapshot = currentSnapshot(conflictInfo.serverVersion);
+                    return (
+                      <p key={key}>
+                        <b>
+                          {SNAPSHOT_FIELDS.find((field) => field.key === key)
+                            ?.title ?? key}
+                          ：
+                        </b>
+                        {normalizeSnapshotValue(
+                          key,
+                          snapshot[key],
+                          meta,
+                          user.timezone,
+                        )}
+                      </p>
+                    );
+                  })}
+                </div>
+              </>
+            ) : (
+              <p>对方的更改与当前内容一致。</p>
+            )}
+            {conflictInfo.overlaps.length > 0 && (
+              <section className="conflict-overlaps">
+                <strong>与你的修改重叠</strong>
+                <p>每项都要明确选择。默认先显示服务器当前值，不会直接提交你的旧值。</p>
+                {conflictInfo.overlaps.map((field) => {
+                  const choice = mergeChoices[field];
+                  const snapshot = currentSnapshot(conflictInfo.serverVersion);
+                  return (
+                    <div className="conflict-overlap" key={field}>
+                      <b>{editGroupTitle(field)}</b>
+                      <p>你的输入：{editGroupValue(field, conflictInfo.mine, meta, user.timezone)}</p>
+                      <p>当前版本：{snapshotGroupValue(field, snapshot, meta, user.timezone)}</p>
+                      <div className="actions">
+                        <Button
+                          aria-pressed={choice === "current"}
+                          onClick={() => chooseOverlap(field, "current")}
+                        >
+                          采用当前版本
+                        </Button>
+                        <Button
+                          aria-pressed={choice === "mine"}
+                          onClick={() => chooseOverlap(field, "mine")}
+                        >
+                          保留我的输入
+                        </Button>
+                        <small>
+                          {choice === "current"
+                            ? "已选择当前版本"
+                            : choice === "mine"
+                              ? "已选择你的输入"
+                              : "尚未选择"}
+                        </small>
+                      </div>
+                    </div>
+                  );
+                })}
+              </section>
+            )}
+            <small>
+              未重叠的输入已保留。{needsMergeChoice ? "选择完重叠字段后才能保存。" : "可以继续检查并保存。"}
+            </small>
           </div>
         )}
         <div className="actions">
           <Button onClick={onClose}>取消</Button>
-          <Button tone="primary" type="submit" disabled={busy}>
+          <Button tone="primary" type="submit" disabled={busy || needsMergeChoice}>
             {busy ? "正在保存…" : "保存修改"}
           </Button>
         </div>
@@ -1826,6 +2003,12 @@ type ReflectDraft = {
   lessonIds: string[];
 };
 
+type StagedLesson = {
+  idempotencyKey: string;
+  title: string;
+  createdId?: string;
+};
+
 function reflectDraft(
   moment: MomentDetail,
   reflection?: Reflection,
@@ -1879,13 +2062,25 @@ function ReflectPageContent({ id }: { id: string }) {
   const [lessonSearch, setLessonSearch] = useState("");
   const [lessonQuery, setLessonQuery] = useState("");
   const [newLessonTitle, setNewLessonTitle] = useState("");
-  const [creatingLesson, setCreatingLesson] = useState(false);
+  const [stagedLessons, setStagedLessons] = useState<StagedLesson[]>([]);
+  const [saveOutcomeUnknown, setSaveOutcomeUnknown] = useState(false);
   const [lessonError, setLessonError] = useState<unknown>();
   const [knownLessons, setKnownLessons] = useState<Record<string, string>>({});
   const [guardPending, setGuardPending] = useState(false);
-  const dirty = Boolean(draft && JSON.stringify(draft) !== initial);
+  const uncertainReflectionFingerprint = useRef<string | null>(null);
+  const reflectionIdempotencyKeys = useRef(
+    new Map<string, ReturnType<typeof idempotency>>(),
+  );
+  const dirty = Boolean(
+    draft &&
+      (JSON.stringify(draft) !== initial ||
+        stagedLessons.length > 0 ||
+        newLessonTitle.trim()),
+  );
   const dirtyRef = useRef(dirty);
   dirtyRef.current = dirty;
+  const lessonSelectionCount =
+    (draft?.lessonIds.length ?? 0) + stagedLessons.length;
   const editing = editId
     ? moment?.reflections.find((reflection) => reflection.id === editId)
     : undefined;
@@ -1914,6 +2109,18 @@ function ReflectPageContent({ id }: { id: string }) {
     const timer = window.setTimeout(() => setLessonQuery(lessonSearch), 250);
     return () => window.clearTimeout(timer);
   }, [lessonSearch]);
+  const cleanupStagedLessons = async () => {
+    for (const staged of stagedLessons) {
+      if (staged.createdId)
+        await deleteStagedLessonIfPresent(staged.createdId, (lessonId) =>
+          api("DELETE", `/lessons/${encodeURIComponent(lessonId)}`),
+        );
+      setStagedLessons((current) =>
+        current.filter((item) => item.idempotencyKey !== staged.idempotencyKey),
+      );
+    }
+    setStagedLessons([]);
+  };
   useEffect(() => {
     const beforeUnload = (event: BeforeUnloadEvent) => {
       if (!dirtyRef.current) return;
@@ -1932,11 +2139,25 @@ function ReflectPageContent({ id }: { id: string }) {
       ).detail;
       if (!detail?.cancel || !detail?.resume) return;
       detail.cancel();
+      if (busy || saveOutcomeUnknown) {
+        setErrorForm(
+          new Error(
+            busy
+              ? "复盘还在保存，请等保存结果出来后再离开。"
+              : "上次保存结果还没确认，请按相同内容重试后再离开。",
+          ),
+        );
+        return;
+      }
       setGuardPending(true);
       void confirm("离开这页？", "复盘还没有保存。离开后这次填写的内容会丢失。")
         .then(async (accepted) => {
-          if (accepted) await detail.resume();
+          if (!accepted) return;
+          await cleanupStagedLessons();
+          dirtyRef.current = false;
+          await detail.resume();
         })
+        .catch((caught) => setErrorForm(caught))
         .finally(() => setGuardPending(false));
     };
     window.addEventListener("beforeunload", beforeUnload);
@@ -1945,7 +2166,7 @@ function ReflectPageContent({ id }: { id: string }) {
       window.removeEventListener("beforeunload", beforeUnload);
       window.removeEventListener("nbd-before-navigate", beforeNavigate);
     };
-  }, [confirm, guardPending]);
+  }, [busy, cleanupStagedLessons, confirm, guardPending, saveOutcomeUnknown]);
 
   const updateDraft = <K extends keyof ReflectDraft>(
     key: K,
@@ -1966,7 +2187,7 @@ function ReflectPageContent({ id }: { id: string }) {
   const toggleLesson = (lesson: { id: string; title: string }) => {
     if (!draft) return;
     const has = draft.lessonIds.includes(lesson.id);
-    if (!has && draft.lessonIds.length >= meta.limits.lessonIdsMax) return;
+    if (!has && lessonSelectionCount >= meta.limits.lessonIdsMax) return;
     updateDraft(
       "lessonIds",
       has
@@ -1975,35 +2196,45 @@ function ReflectPageContent({ id }: { id: string }) {
     );
     setKnownLessons((current) => ({ ...current, [lesson.id]: lesson.title }));
   };
-  const createLesson = async () => {
+  const stageLesson = () => {
     if (!moment || !newLessonTitle.trim() || !draft) return;
-    if (draft.lessonIds.length >= meta.limits.lessonIdsMax) {
+    if (lessonSelectionCount >= meta.limits.lessonIdsMax) {
       setLessonError(
         new Error(`最多关联 ${meta.limits.lessonIdsMax} 条经验。`),
       );
       return;
     }
-    setCreatingLesson(true);
     setLessonError(undefined);
-    try {
-      const created = await api<CreateLessonResponse>(
-        "POST",
-        "/lessons",
-        { title: newLessonTitle.trim() },
-        idempotency(),
-      );
-      setKnownLessons((current) => ({
-        ...current,
-        [created.id]: created.title,
-      }));
-      updateDraft("lessonIds", [...draft.lessonIds, created.id]);
-      setNewLessonTitle("");
-      notify("经验已创建并关联");
-    } catch (caught) {
-      setLessonError(caught);
-    } finally {
-      setCreatingLesson(false);
+    setStagedLessons((current) => [
+      ...current,
+      {
+        idempotencyKey: crypto.randomUUID(),
+        title: newLessonTitle.trim(),
+      },
+    ]);
+    setNewLessonTitle("");
+    notify("已暂存，保存复盘时才会创建并关联");
+  };
+  const removeStagedLesson = async (idempotencyKey: string) => {
+    if (busy || saveOutcomeUnknown) return;
+    const staged = stagedLessons.find(
+      (item) => item.idempotencyKey === idempotencyKey,
+    );
+    if (!staged) return;
+    if (staged.createdId) {
+      try {
+        await deleteStagedLessonIfPresent(staged.createdId, (lessonId) =>
+          api("DELETE", `/lessons/${encodeURIComponent(lessonId)}`),
+        );
+      } catch (caught) {
+        setLessonError(caught);
+        return;
+      }
     }
+    setLessonError(undefined);
+    setStagedLessons((current) =>
+      current.filter((item) => item.idempotencyKey !== idempotencyKey),
+    );
   };
   const save = async (event: FormEvent) => {
     event.preventDefault();
@@ -2015,7 +2246,7 @@ function ReflectPageContent({ id }: { id: string }) {
     }
     if (
       draft.thinkingTraps.length > meta.limits.trapsMax ||
-      draft.lessonIds.length > meta.limits.lessonIdsMax
+      lessonSelectionCount > meta.limits.lessonIdsMax
     ) {
       setErrorForm(new Error("选择数量超过限制。"));
       return;
@@ -2053,28 +2284,102 @@ function ReflectPageContent({ id }: { id: string }) {
         draft.thinkingTraps as CreateReflectionBody["thinkingTraps"],
       lessonIds: draft.lessonIds,
     };
+    if (uncertainReflectionFingerprint.current) {
+      const createdIds = stagedLessons.map((item) => item.createdId);
+      const retryBody = {
+        ...body,
+        lessonIds: [...draft.lessonIds, ...createdIds.filter(Boolean)] as string[],
+      };
+      if (
+        createdIds.some((createdId) => !createdId) ||
+        JSON.stringify(retryBody) !== uncertainReflectionFingerprint.current
+      ) {
+        setErrorForm(
+          new Error(
+            "上次保存结果还没确认。请恢复原内容并重试，避免重复保存。",
+          ),
+        );
+        return;
+      }
+    }
     setBusy(true);
+    let reflectionFingerprint: string | undefined;
     try {
-      if (editing) await api("PATCH", `/reflections/${editing.id}`, body);
-      else
+      let currentStaged = [...stagedLessons];
+      for (let index = 0; index < currentStaged.length; index += 1) {
+        const staged = currentStaged[index];
+        if (staged.createdId) continue;
+        const created = await api<CreateLessonResponse>(
+          "POST",
+          "/lessons",
+          { title: staged.title, momentIds: [moment.id] },
+          { "Idempotency-Key": staged.idempotencyKey },
+        );
+        currentStaged = currentStaged.map((item) =>
+          item.idempotencyKey === staged.idempotencyKey
+            ? { ...item, createdId: created.id }
+            : item,
+        );
+        setStagedLessons(currentStaged);
+        setKnownLessons((current) => ({
+          ...current,
+          [created.id]: created.title,
+        }));
+      }
+      const savedBody = {
+        ...body,
+        lessonIds: [
+          ...draft.lessonIds,
+          ...currentStaged.map((item) => item.createdId!),
+        ],
+      };
+      reflectionFingerprint = JSON.stringify(savedBody);
+      if (editing) await api("PATCH", `/reflections/${editing.id}`, savedBody);
+      else {
+        let headers = reflectionIdempotencyKeys.current.get(
+          reflectionFingerprint,
+        );
+        if (!headers) {
+          headers = idempotency();
+          reflectionIdempotencyKeys.current.set(reflectionFingerprint, headers);
+        }
         await api(
           "POST",
           `/moments/${moment.id}/reflections`,
-          body,
-          idempotency(),
+          savedBody,
+          headers,
         );
+      }
+      uncertainReflectionFingerprint.current = null;
+      setSaveOutcomeUnknown(false);
       dirtyRef.current = false;
-      setDraft({ ...draft });
-      setInitial(JSON.stringify(draft));
+      setDraft({ ...draft, lessonIds: savedBody.lessonIds });
+      setInitial(JSON.stringify({ ...draft, lessonIds: savedBody.lessonIds }));
+      setStagedLessons([]);
       notify(editing ? "复盘修改已保存" : "复盘已保存");
       navigate(`/moments/${moment.id}`);
     } catch (caught) {
+      if (caught instanceof ApiError && caught.status === 0) {
+        setSaveOutcomeUnknown(true);
+        if (reflectionFingerprint)
+          uncertainReflectionFingerprint.current = reflectionFingerprint;
+      } else if (caught instanceof ApiError) {
+        setSaveOutcomeUnknown(false);
+        uncertainReflectionFingerprint.current = null;
+      }
       setErrorForm(caught);
     } finally {
       setBusy(false);
     }
   };
   const cancel = async () => {
+    if (busy) return;
+    if (saveOutcomeUnknown) {
+      setErrorForm(
+        new Error("上次保存结果还没确认，请按相同内容重试后再离开。"),
+      );
+      return;
+    }
     if (
       dirty &&
       !(await confirm(
@@ -2083,6 +2388,12 @@ function ReflectPageContent({ id }: { id: string }) {
       ))
     )
       return;
+    try {
+      await cleanupStagedLessons();
+    } catch (caught) {
+      setErrorForm(caught);
+      return;
+    }
     dirtyRef.current = false;
     if (draft) setInitial(JSON.stringify(draft));
     if (moment) navigate(`/moments/${moment.id}`);
@@ -2101,6 +2412,32 @@ function ReflectPageContent({ id }: { id: string }) {
     meta,
   );
   const difference = moment.intensity - draft.intensityNow;
+  const latestReflection = moment.reflections.at(-1);
+  const editorLocked = busy || saveOutcomeUnknown;
+  const statusCopyKind =
+    draft.resolution || moment.status === "archived"
+      ? reflectionStatusCopyKind({
+          originalStatus: moment.status,
+          resolution: draft.resolution,
+          latestResolution: moment.latestResolution,
+          changesLatestResolution:
+            !editing || latestReflection?.id === editing.id,
+          editableUntil: Date.parse(moment.editableUntil),
+          now: Date.now(),
+        })
+      : undefined;
+  const saveStatusCopy =
+    statusCopyKind === "archived"
+      ? draft.resolution
+        ? `这条记录原本已归档，保存后仍会保持归档；本次结论是「${label(meta, "resolution", draft.resolution)}」。`
+        : "这条记录原本已归档，保存复盘后仍会保持归档。"
+      : statusCopyKind === "settled"
+        ? "保存后会标为「已释怀」。"
+        : statusCopyKind === "fresh"
+          ? `保存后仍会显示「刚记下」，直到 ${instant(moment.editableUntil, user.timezone)} 后才会显示「已回看」。`
+          : statusCopyKind === "reflected"
+            ? "保存后会标为「已回看」。以后想起来可以再写一次。"
+            : "先选一个结论，保存后的状态说明会随选择更新。";
   return (
     <div className="page-shell reflect-page">
       <div className="reflect-topbar">
@@ -2165,6 +2502,7 @@ function ReflectPageContent({ id }: { id: string }) {
             <input
               className="reflect-range"
               type="range"
+              disabled={editorLocked}
               min="0"
               max="10"
               step="1"
@@ -2179,6 +2517,7 @@ function ReflectPageContent({ id }: { id: string }) {
                 <button
                   key={value}
                   type="button"
+                  disabled={editorLocked}
                   className={draft.intensityNow === value ? "scale-active" : ""}
                   aria-pressed={draft.intensityNow === value}
                   onClick={() => updateDraft("intensityNow", value)}
@@ -2197,6 +2536,7 @@ function ReflectPageContent({ id }: { id: string }) {
               {meta.enums.resolution.map((item) => (
                 <button
                   type="button"
+                  disabled={editorLocked}
                   key={item.key}
                   className={`choice-card ${draft.resolution === item.key ? "selected-choice" : ""}`}
                   aria-pressed={draft.resolution === item.key}
@@ -2218,6 +2558,7 @@ function ReflectPageContent({ id }: { id: string }) {
                 {meta.enums.fearCameTrue.map((item) => (
                   <button
                     type="button"
+                    disabled={editorLocked}
                     key={item.key}
                     className={`choice-card ${draft.fearCameTrue === item.key ? "selected-choice" : ""}`}
                     aria-pressed={draft.fearCameTrue === item.key}
@@ -2243,6 +2584,7 @@ function ReflectPageContent({ id }: { id: string }) {
             </p>
             <input
               type="range"
+              disabled={editorLocked}
               min="0"
               max="10"
               step="1"
@@ -2255,6 +2597,7 @@ function ReflectPageContent({ id }: { id: string }) {
             <div className="range-scale">
               <button
                 type="button"
+                disabled={editorLocked}
                 onClick={() => updateDraft("severityNow", "")}
               >
                 留空
@@ -2262,6 +2605,7 @@ function ReflectPageContent({ id }: { id: string }) {
               {Array.from({ length: 11 }, (_, value) => (
                 <button
                   type="button"
+                  disabled={editorLocked}
                   key={value}
                   className={
                     draft.severityNow === String(value) ? "scale-active" : ""
@@ -2277,6 +2621,7 @@ function ReflectPageContent({ id }: { id: string }) {
             <label className="form-field">
               <span>后来实际发生了什么？</span>
               <textarea
+                disabled={editorLocked}
                 rows={4}
                 maxLength={meta.limits.whatHappenedMax}
                 value={draft.whatHappened}
@@ -2290,6 +2635,7 @@ function ReflectPageContent({ id }: { id: string }) {
               <span>现在怎么看这件事？</span>
               <textarea
                 className="reflect-perspective"
+                disabled={editorLocked}
                 rows={5}
                 maxLength={meta.limits.perspectiveMax}
                 value={draft.perspective}
@@ -2316,8 +2662,9 @@ function ReflectPageContent({ id }: { id: string }) {
                     type="button"
                     className={`choice-card ${selected ? "selected-choice" : ""} ${!selected && draft.thinkingTraps.length >= meta.limits.trapsMax ? "choice-disabled" : ""}`}
                     disabled={
-                      !selected &&
-                      draft.thinkingTraps.length >= meta.limits.trapsMax
+                      editorLocked ||
+                      (!selected &&
+                        draft.thinkingTraps.length >= meta.limits.trapsMax)
                     }
                     aria-pressed={selected}
                     key={item.key}
@@ -2334,13 +2681,14 @@ function ReflectPageContent({ id }: { id: string }) {
             <div className="section-heading">
               <h2>关联经验</h2>
               <span>
-                已关联 {draft.lessonIds.length}/{meta.limits.lessonIdsMax}
+                已选 {lessonSelectionCount}/{meta.limits.lessonIdsMax}
               </span>
             </div>
             <label className="form-field">
               <span>搜索经验</span>
               <input
                 type="search"
+                disabled={editorLocked}
                 value={lessonSearch}
                 onChange={(event) => setLessonSearch(event.target.value)}
                 placeholder="输入关键词查找经验"
@@ -2352,6 +2700,7 @@ function ReflectPageContent({ id }: { id: string }) {
                   key={lessonId}
                   type="button"
                   className="lesson-choice selected-choice"
+                  disabled={editorLocked}
                   onClick={() =>
                     updateDraft(
                       "lessonIds",
@@ -2363,20 +2712,43 @@ function ReflectPageContent({ id }: { id: string }) {
                   <span>已关联 · 移除</span>
                 </button>
               ))}
+              {stagedLessons.map((staged) => (
+                <button
+                  key={staged.idempotencyKey}
+                  type="button"
+                  className="lesson-choice selected-choice"
+                  disabled={editorLocked}
+                  onClick={() =>
+                    void removeStagedLesson(staged.idempotencyKey)
+                  }
+                >
+                  <span>{staged.title}</span>
+                  <span>
+                    {staged.createdId ? "待保存 · 移除" : "待创建 · 移除"}
+                  </span>
+                </button>
+              ))}
               {lessonState.loading ? (
                 <small>正在搜索经验…</small>
               ) : lessonState.error ? (
                 <FormError error={lessonState.error} />
               ) : (
                 lessons
-                  .filter((lesson) => !draft.lessonIds.includes(lesson.id))
+                  .filter(
+                    (lesson) =>
+                      !draft.lessonIds.includes(lesson.id) &&
+                      !stagedLessons.some(
+                        (staged) => staged.createdId === lesson.id,
+                      ),
+                  )
                   .map((lesson) => (
                     <button
                       key={lesson.id}
                       type="button"
                       className="lesson-choice"
                       disabled={
-                        draft.lessonIds.length >= meta.limits.lessonIdsMax
+                        editorLocked ||
+                        lessonSelectionCount >= meta.limits.lessonIdsMax
                       }
                       onClick={() => toggleLesson(lesson)}
                     >
@@ -2394,33 +2766,32 @@ function ReflectPageContent({ id }: { id: string }) {
                 <span>新建一条经验</span>
                 <input
                   value={newLessonTitle}
+                  disabled={editorLocked}
                   maxLength={meta.limits.lessonTitleMax}
                   onChange={(event) => setNewLessonTitle(event.target.value)}
                   placeholder="给这条经验起个标题"
                 />
               </label>
               <Button
-                onClick={createLesson}
+                onClick={stageLesson}
                 disabled={
-                  creatingLesson ||
+                  editorLocked ||
                   !newLessonTitle.trim() ||
-                  draft.lessonIds.length >= meta.limits.lessonIdsMax
+                  lessonSelectionCount >= meta.limits.lessonIdsMax
                 }
               >
-                {creatingLesson ? "正在创建…" : "创建并关联"}
+                暂存并关联
               </Button>
               <FormError error={lessonError} />
             </div>
           </section>
           <FormError error={errorForm} />
           <div className="dirty-bar">
-            <p>
-              {draft.resolution === "let_go"
-                ? "保存后，这件事会标为「已释怀」。"
-                : "保存后，这件事会标为「已回看」。以后想起来可以再写一次。"}
-            </p>
+            <p>{saveStatusCopy}</p>
             <div className="actions">
-              <Button onClick={cancel}>取消</Button>
+              <Button disabled={busy || saveOutcomeUnknown} onClick={cancel}>
+                {saveOutcomeUnknown ? "请先重试保存" : "取消"}
+              </Button>
               <Button tone="primary" type="submit" disabled={busy}>
                 {busy ? "正在保存…" : editing ? "保存修改" : "保存复盘"}
               </Button>
@@ -2539,8 +2910,6 @@ function RevisionsPageContent({ id }: { id: string }) {
     selectedRevision === moment?.revision
       ? current
       : (selectedOld?.snapshot ?? current);
-  const currentAuthor =
-    moment?.lastEditedBy?.label ?? moment?.source.label ?? "我";
   if ((momentState.loading && !moment) || (revisionsState.loading && !history))
     return <Loading />;
   if (momentState.error && !moment)
@@ -2551,13 +2920,21 @@ function RevisionsPageContent({ id }: { id: string }) {
     );
   if (!moment || !history || !snapshot || !current) return null;
   const selectedIsCurrent = selectedRevision === moment.revision;
-  const author = selectedIsCurrent
-    ? currentAuthor
-    : (selectedOld?.editedBy.label ?? "我");
-  const editedAt = selectedIsCurrent
-    ? (moment.lastEditedAt ?? moment.capturedAt)
-    : (selectedOld?.editedAt ?? moment.capturedAt);
-  const reason = selectedIsCurrent ? null : selectedOld?.reason;
+  const selectedProvenance = versionProvenance(
+    selectedRevision ?? moment.revision,
+    moment.capturedAt,
+    moment.source.label,
+    history.items,
+  );
+  const currentProvenance = versionProvenance(
+    moment.revision,
+    moment.capturedAt,
+    moment.source.label,
+    history.items,
+  );
+  const author = selectedProvenance.author;
+  const editedAt = selectedProvenance.at;
+  const reason = selectedProvenance.reason;
   const changed = new Set(
     SNAPSHOT_FIELDS.filter(
       (field) =>
@@ -2565,10 +2942,6 @@ function RevisionsPageContent({ id }: { id: string }) {
         JSON.stringify(current[field.key]),
     ).map((field) => field.key),
   );
-  const changeNames =
-    selectedOld?.changedFields.map(
-      (key) => SNAPSHOT_FIELDS.find((field) => field.key === key)?.title ?? key,
-    ) ?? [];
   return (
     <div className="page-shell revisions-page">
       <a
@@ -2599,51 +2972,77 @@ function RevisionsPageContent({ id }: { id: string }) {
               <span className="current-version-label">当前版本</span>
             </strong>
             <span>
-              {instant(moment.lastEditedAt ?? moment.capturedAt, user.timezone)}{" "}
-              · {currentAuthor} 修改
+              来源：{currentProvenance.source} ·{" "}
+              {instant(currentProvenance.at, user.timezone)}
+              {currentProvenance.author
+                ? ` · ${currentProvenance.author}`
+                : ""}
             </span>
-            {moment.revisionCount === 0 && <small>最初的记录</small>}
+            {currentProvenance.changedFields.length > 0 && (
+              <small>
+                此版改动：
+                {currentProvenance.changedFields
+                  .map(
+                    (key) =>
+                      SNAPSHOT_FIELDS.find((field) => field.key === key)?.title ??
+                      key,
+                  )
+                  .join("、")}
+              </small>
+            )}
+            {currentProvenance.reason && (
+              <small>原因：{currentProvenance.reason}</small>
+            )}
           </button>
-          {oldVersions.map((version) => (
-            <button
-              type="button"
-              key={version.revision}
-              aria-pressed={selectedRevision === version.revision}
-              className={`version-button ${selectedRevision === version.revision ? "selected-version" : ""}`}
-              onClick={() => setSelectedRevision(version.revision)}
-            >
-              <strong>
-                第 {version.revision} 版{" "}
-                {version.revision === 1 && (
-                  <span className="original-version-label">最初的记录</span>
+          {oldVersions.map((version) => {
+            const provenance = versionProvenance(
+              version.revision,
+              moment.capturedAt,
+              moment.source.label,
+              history.items,
+            );
+            return (
+              <button
+                type="button"
+                key={version.revision}
+                aria-pressed={selectedRevision === version.revision}
+                className={`version-button ${selectedRevision === version.revision ? "selected-version" : ""}`}
+                onClick={() => setSelectedRevision(version.revision)}
+              >
+                <strong>
+                  第 {version.revision} 版{" "}
+                  {version.revision === 1 && (
+                    <span className="original-version-label">最初的记录</span>
+                  )}
+                </strong>
+                <span>
+                  来源：{provenance.source} · {instant(provenance.at, user.timezone)}
+                  {provenance.author ? ` · ${provenance.author}` : ""}
+                </span>
+                {provenance.changedFields.length > 0 && (
+                  <small>
+                    此版改动：
+                    {provenance.changedFields
+                      .map(
+                        (key) =>
+                          SNAPSHOT_FIELDS.find((field) => field.key === key)
+                            ?.title ?? key,
+                      )
+                      .join("、")}
+                  </small>
                 )}
-              </strong>
-              <span>
-                {instant(version.editedAt, user.timezone)} ·{" "}
-                {version.editedBy.label} 更正
-              </span>
-              {version.changedFields.length > 0 && (
-                <small>
-                  改了：
-                  {version.changedFields
-                    .map(
-                      (key) =>
-                        SNAPSHOT_FIELDS.find((field) => field.key === key)
-                          ?.title ?? key,
-                    )
-                    .join("、")}
-                </small>
-              )}
-              {version.reason && <small>原因：{version.reason}</small>}
-            </button>
-          ))}
+                {provenance.reason && <small>原因：{provenance.reason}</small>}
+              </button>
+            );
+          })}
         </aside>
         <main className="revision-snapshot">
           <div className="section-heading">
             <div>
               <h2>第 {selectedRevision} 版</h2>
               <p>
-                {instant(editedAt, user.timezone)} · {author}
+                {instant(editedAt, user.timezone)}
+                {author ? ` · ${author}` : ""}
               </p>
             </div>
             <div className="snapshot-legend">

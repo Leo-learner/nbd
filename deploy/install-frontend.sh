@@ -30,10 +30,35 @@ if(manifest.commit!==process.argv[3]||!manifest.files['index.html'])throw Error(
 for(const [path,hash] of Object.entries(manifest.files)){if(path.startsWith('/')||path.split('/').includes('..'))throw Error('Invalid path');if(createHash('sha256').update(readFileSync(`${root}/${path}`)).digest('hex')!==hash)throw Error(`Hash mismatch: ${path}`);}
 JS
 if [[ -n $staging ]]; then mv "$staging" "$release"; staging=""; fi
-rollback(){ status=$?;trap - ERR;ln -s "$previous" "$base/frontend.rollback";mv -Tf "$base/frontend.rollback" "$base/frontend";echo 'Frontend switch failed; previous release restored' >&2;exit "$status"; }
+switch_link() {
+  node --input-type=module - "$1" "$2" <<'SWITCH_JS'
+import { mkdtempSync, realpathSync, renameSync, rmSync, statSync, symlinkSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+const [target, destination] = process.argv.slice(2);
+if (!statSync(target).isDirectory()) throw new Error('Release target is not a directory');
+const temporary = mkdtempSync(join(dirname(destination), '.nbd-switch-'));
+try {
+  const link = join(temporary, 'link');
+  symlinkSync(target, link);
+  renameSync(link, destination);
+  if (realpathSync(destination) !== realpathSync(target)) throw new Error('Release switch target mismatch');
+} finally {
+  rmSync(temporary, { recursive: true, force: true });
+}
+SWITCH_JS
+}
+rollback(){
+  status=$?
+  trap - ERR
+  if switch_link "$previous" "$base/frontend"; then
+    echo 'Frontend switch failed; previous release restored' >&2
+  else
+    echo 'Frontend switch failed; rollback link could not be restored' >&2
+  fi
+  exit "$status"
+}
 trap rollback ERR
-ln -s "$release" "$base/frontend.next"
-mv -Tf "$base/frontend.next" "$base/frontend"
+switch_link "$release" "$base/frontend"
 node --input-type=module - "$release" <<'JS'
 import {readFileSync} from 'node:fs';import {createHash} from 'node:crypto';
 const root=process.argv[2],manifest=JSON.parse(readFileSync(`${root}/frontend-release.json`));

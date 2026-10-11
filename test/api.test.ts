@@ -210,6 +210,63 @@ test("事件完整 REST 流程：修订、补记、标签、归档、回收站�
     await f.close();
   }
 });
+test("REST 修订比较规范化快照，并返回精确的单字段变化", async () => {
+  const f = await fixture();
+  try {
+    const id = f.s.moments.record(
+      f.agent,
+      momentInput({
+        happenedAt: "2026-10-01T10:00:45+08:00",
+        emotions: [{ key: "embarrassed" }],
+      }),
+    ).moment.id;
+    const unchanged = await f.api("PATCH", `/moments/${id}`, {
+      expectedRevision: 1,
+      happenedAt: "2026-10-01T02:00:45.000Z",
+      happenedAtPrecision: "exact",
+      emotions: [{ key: "embarrassed" }],
+    });
+    assert.equal(unchanged.statusCode, 200, unchanged.body);
+    assert.equal(unchanged.json().revision, 1);
+    assert.equal(
+      (await f.api("GET", `/moments/${id}/revisions`)).json().current,
+      1,
+    );
+    const title = await f.api("PATCH", `/moments/${id}`, {
+      expectedRevision: 1,
+      title: "更正标题",
+    });
+    assert.equal(title.statusCode, 200, title.body);
+    assert.equal(title.json().revision, 2);
+    assert.deepEqual(
+      (await f.api("GET", `/moments/${id}/revisions`)).json().items[0]
+        .changedFields,
+      ["title"],
+    );
+    const dateId = f.s.moments.record(
+      f.agent,
+      momentInput({
+        narrative: "日期精度测试原话",
+        happenedAt: "2026-10-01",
+        emotions: [{ key: "embarrassed" }],
+      }),
+    ).moment.id;
+    const sameDate = await f.api("PATCH", `/moments/${dateId}`, {
+      expectedRevision: 1,
+      happenedAt: "2026-10-01",
+      happenedAtPrecision: "day",
+      emotions: [{ key: "embarrassed" }],
+    });
+    assert.equal(sameDate.statusCode, 200, sameDate.body);
+    assert.equal(sameDate.json().revision, 1);
+    assert.equal(
+      (await f.api("GET", `/moments/${dateId}/revisions`)).json().items.length,
+      0,
+    );
+  } finally {
+    await f.close();
+  }
+});
 test("复盘和经验新建、修改、关联、删除都会更新派生数据", async () => {
   const f = await fixture();
   try {

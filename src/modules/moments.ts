@@ -349,8 +349,11 @@ export class MomentService {
           row.happened_precision = t.precision;
         } else if (input.happenedAtPrecision)
           row.happened_precision = input.happenedAtPrecision;
-        const changed = fields.filter(
-          (k) => JSON.stringify(snapshot[k]) !== JSON.stringify(input[k]),
+        const nextSnapshot = this.snapshot({ ...m, ...row });
+        const changed = Object.keys(snapshot).filter(
+          (k) =>
+            JSON.stringify(snapshot[k]) !==
+            JSON.stringify(nextSnapshot[k]),
         );
         if (!changed.length)
           return {

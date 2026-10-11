@@ -1,78 +1,12 @@
 {
-  "summary": "待回看收件箱（upcomingDays=7）：今天到期一件，明天到期一件",
+  "summary": "待回看收件箱当前未启用自动排程，因此没有到期或即将到期的记录",
   "operationId": "listDueReviews",
   "kind": "response",
   "status": 200,
   "schema": "DueList",
   "value": {
-    "items": [
-      {
-        "moment": {
-          "id": "9b4f0e21-6d3a-4f8c-8e17-c25a90d3b6e4",
-          "title": "给客户的周报附错了文件",
-          "excerpt": "今天给客户发周报的时候附错了文件，把内部的排期表发出去了，里面还有我们自己写的吐槽备注。发出去半小时才发现，赶紧补发了正确的，但撤回不了。现在一直在想客户会不会看到那些备注，觉得我们不专业，影响下个月的续约。",
-          "happenedOn": "2026-10-08",
-          "happenedAtPrecision": "day",
-          "scene": "work",
-          "emotions": [
-            {
-              "key": "anxious",
-              "intensity": 7
-            },
-            {
-              "key": "regretful",
-              "intensity": null
-            }
-          ],
-          "intensity": 7,
-          "severity": 6,
-          "fearedOutcome": "客户觉得我们不专业，影响下个月的续约。"
-        },
-        "dueOn": "2026-10-11",
-        "overdueDays": 0,
-        "step": {
-          "index": 1,
-          "total": 3
-        },
-        "lastReflection": null
-      }
-    ],
-    "dueCount": 1,
-    "upcoming": [
-      {
-        "moment": {
-          "id": "6f1c2a9e-3b7d-4c51-9a2e-0d8f4b6c1a72",
-          "title": "周会上把新领导的名字叫错了",
-          "excerpt": "今天周会轮到我汇报，我开口就说「谢谢王总」，结果新来的领导姓汪，不姓王。会议室安静了两秒，有人笑了一下，我脸一下子就烧起来了，后面讲什么都有点结巴。散会以后我一直在想，他会不会觉得我根本不上心，连他名字都记不住。",
-          "happenedOn": "2026-09-28",
-          "happenedAtPrecision": "exact",
-          "scene": "work",
-          "emotions": [
-            {
-              "key": "embarrassed",
-              "intensity": 8
-            },
-            {
-              "key": "anxious",
-              "intensity": 6
-            }
-          ],
-          "intensity": 8,
-          "severity": 6,
-          "fearedOutcome": "新领导觉得我做事不上心，以后对我有成见。"
-        },
-        "dueOn": "2026-10-12",
-        "overdueDays": 0,
-        "step": {
-          "index": 2,
-          "total": 3
-        },
-        "lastReflection": {
-          "createdAt": "2026-10-02T13:05:00.000Z",
-          "intensityNow": 3,
-          "resolution": "easing"
-        }
-      }
-    ]
+    "items": [],
+    "dueCount": 0,
+    "upcoming": []
   }
 }

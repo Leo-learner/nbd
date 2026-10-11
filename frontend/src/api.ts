@@ -1,4 +1,6 @@
 import type { operations } from "../../sdk/generated";
+import { ApiError } from "./errors";
+export { ApiError } from "./errors";
 export type ResponseOf<K extends keyof operations> = operations[K] extends {
   responses: { 200: { content: { "application/json": infer R } } };
 }
@@ -9,18 +11,6 @@ export type User = NonNullable<ResponseOf<"getMe">["user"]>;
 export type MomentDetail = ResponseOf<"getMoment">;
 export type MomentSummary = ResponseOf<"listMoments">["items"][number];
 export type Lesson = ResponseOf<"getLesson">;
-export class ApiError extends Error {
-  constructor(
-    public status: number,
-    public code: string,
-    message: string,
-    public details?: Record<string, unknown>,
-    public requestId?: string,
-    public retryAfter = 0,
-  ) {
-    super(message);
-  }
-}
 export async function api<T>(
   method: string,
   path: string,

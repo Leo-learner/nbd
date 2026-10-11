@@ -69,9 +69,8 @@ export async function buildApp(
   await app.register(rateLimit, {
     max: 300,
     timeWindow: "1 minute",
-    errorResponseBuilder: () => ({
-      error: { code: "RATE_LIMITED", message: "请求过于频繁，请稍后再试" },
-    }),
+    errorResponseBuilder: () =>
+      new AppError(429, "RATE_LIMITED", "请求过于频繁，请稍后再试"),
   });
   await app.register(swagger, {
     openapi: {
@@ -260,26 +259,40 @@ export async function buildApp(
     oauth.addHook("onRequest", async (_req, reply) => {
       reply.header("Cache-Control", "no-store");
     });
-    oauth.setErrorHandler((e, _req, reply) => {
-      const status =
+    oauth.setErrorHandler((e, req, reply) => {
+      const originalStatus =
         e instanceof OAuthError
           ? e.status
           : e instanceof AppError
             ? e.status
+            : ((e as { statusCode?: number }).statusCode ?? 500);
+      const status =
+        originalStatus === 429
+          ? 429
+          : originalStatus >= 500
+            ? originalStatus
             : 400;
+      if (status >= 500)
+        req.log.error({ requestId: req.id }, "OAuth request failed");
+      if (status === 429 && !reply.hasHeader("Retry-After"))
+        reply.header("Retry-After", "60");
       reply.code(status).send({
         error:
-          e instanceof OAuthError
-            ? e.code
-            : e instanceof AppError && e.code === "INVALID_CREDENTIALS"
-              ? "access_denied"
-              : "invalid_request",
+          status >= 500
+            ? "server_error"
+            : e instanceof OAuthError
+              ? e.code
+              : e instanceof AppError && e.code === "INVALID_CREDENTIALS"
+                ? "access_denied"
+                : "invalid_request",
         error_description:
-          e instanceof OAuthError
-            ? e.message
-            : e instanceof AppError
+          status >= 500
+            ? "Service temporarily unavailable"
+            : e instanceof OAuthError
               ? e.message
-              : "Invalid request",
+              : e instanceof AppError
+                ? e.message
+                : "Invalid request",
       });
     });
     for (const path of [
@@ -308,6 +321,11 @@ export async function buildApp(
       },
       async (req, reply) => {
         const begin = await s.oauth.begin(req.query as Row);
+        const callback = new URL(begin.request.redirect_uri).origin;
+        reply.header(
+          "Content-Security-Policy",
+          csp.replace("form-action 'self'", `form-action 'self' ${callback}`),
+        );
         reply.setCookie(csrfCookie, begin.csrf, {
           path: "/",
           httpOnly: true,
@@ -340,11 +358,38 @@ export async function buildApp(
           req.headers.origin !== config.publicOrigin
         )
           throw new OAuthError("invalid_request", "Invalid Origin", 403);
-        const result = await s.oauth.approve(
-          req.body as Row,
-          req.cookies[csrfCookie],
-          req.cookies[cookieName(s)],
-        );
+        let result;
+        try {
+          result = await s.oauth.approve(
+            req.body as Row,
+            req.cookies[csrfCookie],
+            req.cookies[cookieName(s)],
+            { requestId: req.id, ip: req.ip },
+          );
+        } catch (e) {
+          if (!(e instanceof AppError) || e.code !== "INVALID_CREDENTIALS")
+            throw e;
+          const body = req.body as Row,
+            request = s.oauth.consentRequest(body, req.cookies[csrfCookie]),
+            client = await s.oauth.client(request.client_id),
+            callback = new URL(request.redirect_uri).origin;
+          return reply
+            .header(
+              "Content-Security-Policy",
+              csp.replace(
+                "form-action 'self'",
+                `form-action 'self' ${callback}`,
+              ),
+            )
+            .code(401)
+            .type("text/html; charset=utf-8")
+            .send(
+              s.oauth.form(request, body.csrf, client, false, {
+                message: "用户名或密码错误，请重试。",
+                selected: body,
+              }),
+            );
+        }
         if (result.session) setSession(reply, s, result.session);
         reply.clearCookie(csrfCookie, {
           path: "/",

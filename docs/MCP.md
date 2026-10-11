@@ -94,7 +94,7 @@ OAuth 客户端顺着它找到受保护资源元数据（RFC 9728），路径版
    - 不跟随重定向，5 秒超时，响应不超过 5 KB；
    - 文档里的 `client_id` 必须等于请求的地址；
    - 缓存 24 小时（`oauth_clients` 表）。
-   已知的 client_id：Claude Code 是 `https://claude.ai/oauth/claude-code-client-metadata`，ChatGPT 是 `https://chatgpt.com/oauth/client.json`。claude.ai 托管 App 用的地址调研时没查到，**P4 实测时补到这里**。
+   已知的 client_id：Claude Code 是 `https://claude.ai/oauth/claude-code-client-metadata`，ChatGPT 是 `https://chatgpt.com/oauth/client.json`。claude.ai 托管 App 的实际 `client_id` **仍待真实账号授权后记录**，不能用 Claude Code 的地址代替。2026-10-11 本地假客户端浏览器验收已走通，不代表真实客户端已连接。
 3. **校验请求**，任何一项不合格都直接显示错误页，**不跳回**对方的地址（防开放重定向）：
    - `redirect_uri` 在文档的 `redirect_uris` 里，并且域名在 `OAUTH_REDIRECT_HOSTS` 里；
    - `code_challenge_method=S256`；
@@ -107,9 +107,11 @@ OAuth 客户端顺着它找到受保护资源元数据（RFC 9728），路径版
    - 可以取消勾选「读取历史」（`read`），得到一个只写授权。
    - 表单带一次性 CSRF 令牌，和待处理的请求一起存在 `oauth_requests` 里，10 分钟有效。
    - 页面头：`Content-Security-Policy: frame-ancestors 'none'`、`X-Frame-Options: DENY`。
-5. **用户同意后**：创建或更新 `oauth_grants`（同一个 client 只保留一个有效授权），生成授权码（只存哈希，60 秒有效，只能用一次），然后 302 回到 `redirect_uri?code=…&state=…&iss=https://nbd.dkz12345.com`。用户拒绝时带 `error=access_denied` 跳回。
+   - 只有确认页与密码重试页的 CSP 使用 `form-action 'self' <已校验回调 origin>`；其他响应仍限制为 `'self'`。密码错误留在确认页，保留原请求和 CSRF，不回显凭据。
+5. **用户同意后**：生成授权码（只存哈希，60 秒有效，只能用一次），然后 302 回到 `redirect_uri?code=…&state=…&iss=https://nbd.dkz12345.com`。旧授权此时继续有效。为兼容现有的单客户端有效授权唯一索引，待换码的授权码暂时引用现有授权，但不会改变其权限或令牌。用户拒绝时带 `error=access_denied` 跳回。
 6. **换令牌**：`POST /oauth/token`。请求体必须接受 `application/x-www-form-urlencoded`。
    - `grant_type=authorization_code`：带 `code`、`redirect_uri`、`code_verifier`、`client_id`、`resource`，校验 PKCE 和受众后发访问令牌 + 刷新令牌。
+   - 换码成功时，在同一事务中撤销旧授权、创建替代授权并签发令牌；事务失败全部回滚。未曾换码的授权不出现在「已连接的应用」，清理任务在满一小时后撤销。放弃或失败的新连接不影响旧令牌。
    - `grant_type=refresh_token`：每次都轮换刷新令牌。旧刷新令牌再次出现即视为重放，**撤销整个授权**；失效的刷新令牌一律返回 `invalid_grant`（客户端会据此让用户重新连接）。
    - 10 秒内必须响应；响应带 `Cache-Control: no-store`。错误按 RFC 6749 返回 `invalid_request`、`invalid_grant`、`invalid_client`、`unsupported_grant_type`、`invalid_scope`，受众不对返回 `invalid_target`（RFC 8707）。
 7. **撤销**：`POST /oauth/revoke`（RFC 7009）；网页「设置 → 已连接的应用」里断开，也会撤销该授权下的全部令牌。
@@ -330,7 +332,7 @@ ChatGPT 优先用 CIMD（client_id 为 `https://chatgpt.com/oauth/client.json`�
 - **审计**：每次工具调用先写一条 `running`，结束时改成 `success` 或 `error`（带错误码）。`action` 用「资源.动作」，例如 `moment.record`、`moment.correct`、`note.create`、`reflection.create`、`review.snooze`、`lesson.create`；只读工具记为 `moment.read`、`moment.search` 等。**不记录参数和正文**。在网页「设置 → 操作记录」里按来源（MCP/OAuth）查看。
 - **限流**（按令牌计，不按 IP；云端连接器共用出口 IP）：
   - 每个令牌每分钟 120 个请求，`record_moment` 每小时 30 次；
-  - `/oauth/authorize` 的提交按 IP 每分钟 10 次，`/oauth/token` 按 client 每分钟 60 次。
+  - `/oauth/authorize` 的提交按 IP 每分钟 10 次，`/oauth/token` 当前也按 IP 每分钟 60 次（Fastify 默认键），并非按 client_id。NBD 已于 2026-10-11 改为灰云；若以后启用未经真实 IP 加固的代理，限流会聚合到代理出口地址。
   - 超出返回 429 / `RATE_LIMITED`。
 
 | 现象 | 原因与处理 |

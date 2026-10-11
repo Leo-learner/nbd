@@ -160,7 +160,7 @@ export class AccessService {
       items: (
         this.db
           .prepare(
-            "SELECT * FROM oauth_grants WHERE user_id=? AND revoked_at IS NULL ORDER BY created_at DESC",
+            "SELECT * FROM oauth_grants g WHERE user_id=? AND revoked_at IS NULL AND EXISTS (SELECT 1 FROM oauth_tokens t WHERE t.grant_id=g.id) ORDER BY created_at DESC",
           )
           .all(p.userId) as Row[]
       ).map((g) => ({

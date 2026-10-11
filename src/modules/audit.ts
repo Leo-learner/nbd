@@ -46,8 +46,10 @@ export class AuditService {
   }
   attachUser(id: number, userId: string) {
     this.db
-      .prepare("UPDATE audit_events SET user_id=? WHERE id=?")
-      .run(userId, id);
+      .prepare(
+        "UPDATE audit_events SET user_id=?,actor_kind='owner',actor_id=NULL,actor_label=(SELECT username FROM users WHERE id=?) WHERE id=?",
+      )
+      .run(userId, userId, id);
   }
   run<T>(actor: Principal, action: string, fn: () => T, channel = "web"): T {
     const id = this.start(actor, action, channel);

@@ -45,7 +45,7 @@
       "content": [
         {
           "type": "text",
-          "text": "{\"data\":{\"moment\":{\"id\":\"2d7e9b40-8c1f-4e6a-b3d5-71a0c9e2f418\",\"revision\":1,\"status\":\"fresh\",\"capturedAt\":\"2026-10-11T01:02:10.500Z\",\"happenedOn\":\"2026-10-11\",\"editableUntil\":\"2026-10-12T01:02:10.500Z\",\"nextReviewOn\":\"2026-10-14\",\"tags\":[\"通勤\"],\"webUrl\":\"https://nbd.dkz12345.com/moments/2d7e9b40-8c1f-4e6a-b3d5-71a0c9e2f418\"},\"replayed\":false}}"
+          "text": "{\"data\":{\"moment\":{\"id\":\"2d7e9b40-8c1f-4e6a-b3d5-71a0c9e2f418\",\"revision\":1,\"status\":\"fresh\",\"capturedAt\":\"2026-10-11T01:02:10.500Z\",\"happenedOn\":\"2026-10-11\",\"editableUntil\":\"2026-10-12T01:02:10.500Z\",\"nextReviewOn\":null,\"tags\":[\"通勤\"],\"webUrl\":\"https://nbd.dkz12345.com/moments/2d7e9b40-8c1f-4e6a-b3d5-71a0c9e2f418\"},\"replayed\":false}}"
         }
       ],
       "structuredContent": {
