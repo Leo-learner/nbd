@@ -107,7 +107,7 @@ for attempt in {1..30}; do
   if curl -fsS --resolve nbd.dkz12345.com:443:127.0.0.1 https://nbd.dkz12345.com/readyz 2>/dev/null; then tls_ready=true; break; fi
   sleep 1
 done
-[[ $tls_ready == true ]] || { echo 'Dedicated HTTPS site did not become ready' >&2; exit 1; }
+if [[ $tls_ready != true ]]; then echo 'Dedicated HTTPS site did not become ready' >&2; false; fi
 [[ $(curl -s --resolve nbd.dkz12345.com:443:127.0.0.1 -o /dev/null -w '%{http_code}' -X POST https://nbd.dkz12345.com/mcp) == 401 ]]
 trap - ERR
 rm -f "$archive"
