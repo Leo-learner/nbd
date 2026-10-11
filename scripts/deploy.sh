@@ -10,16 +10,20 @@ remote_commit=$(git ls-remote origin "refs/heads/$branch" | cut -f1)
 [[ $commit == "$remote_commit" ]] || { echo 'Push this exact verified commit before deployment' >&2; exit 1; }
 npm run build
 staging=$(mktemp -d /tmp/nbd-package.XXXXXX)
+chmod 755 "$staging"
 archive="/tmp/nbd-$commit.tar.gz"
 trap 'rm -rf "$staging"' EXIT
 git archive HEAD | tar -x -C "$staging"
 cp -R dist "$staging/dist"
+for required in dist/scripts/admin.js dist/src/server.js dist/docs/openapi.yaml dist/docs/mcp-tools.json dist/src/db/migrations/001_init.sql; do
+  [[ -f "$staging/$required" ]] || { echo "Missing release file: $required" >&2; exit 1; }
+done
 node scripts/scan-secrets.mjs "$staging"
 node --input-type=module - "$staging" "$commit" <<'JS'
 import {writeFileSync} from 'node:fs';import {join} from 'node:path';
 writeFileSync(join(process.argv[2],'RELEASE.json'),JSON.stringify({commit:process.argv[3],repository:'https://github.com/Leo-learner/nbd',createdAt:new Date().toISOString()},null,2)+'\n');
 JS
-tar -czf "$archive" -C "$staging" .
+COPYFILE_DISABLE=1 tar --no-xattrs -czf "$archive" -C "$staging" .
 hash=$(shasum -a 256 "$archive" | cut -d ' ' -f1)
 key=/Users/leo/Desktop/ssh-key-removing-restricted/leo-web-key.pem
 ssh_opts=(-o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new -o ConnectTimeout=12 -i "$key")

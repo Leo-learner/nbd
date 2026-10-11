@@ -40,6 +40,9 @@ install -d -m 755 "$base/releases" "$base/frontend-releases"
 if [[ ! -d $release ]]; then
   install -d -m 755 "$release"
   tar -xzf "$archive" -C "$release" --no-same-owner
+  # An archive's '.' entry can replace the destination directory permissions.
+  chmod 755 "$release"
+  [[ -f "$release/dist/scripts/admin.js" && -f "$release/dist/src/server.js" ]]
   [[ $(node -p "JSON.parse(require('fs').readFileSync('$release/RELEASE.json')).commit") == "$commit" ]]
   chown -R nbd:nbd "$release"
   (cd "$release" && runuser -u nbd -- npm ci --omit=dev --cache /var/lib/nbd/npm-cache --no-audit --no-fund)
