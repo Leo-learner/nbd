@@ -9,8 +9,10 @@ printf '%s  %s\n' "$expected_hash" "$archive" | sha256sum -c -
 base=/opt/apps/nbd
 release="$base/releases/$commit"
 site=/etc/nginx/sites-available/nbd.dkz12345.com
-previous=$(readlink -f "$base/current" 2>/dev/null || true)
-previous_frontend=$(readlink -f "$base/frontend" 2>/dev/null || true)
+previous=""
+previous_frontend=""
+if [[ -d "$base/current" ]]; then previous=$(readlink -f "$base/current"); fi
+if [[ -d "$base/frontend" ]]; then previous_frontend=$(readlink -f "$base/frontend"); fi
 staging=$(mktemp -d /tmp/nbd-install.XXXXXX)
 previous_site=""
 previous_env=""
