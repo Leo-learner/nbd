@@ -25,8 +25,15 @@ rollback() {
   if [[ -n $previous ]]; then
     ln -s "$previous" "$base/current.rollback"
     mv -Tf "$base/current.rollback" "$base/current"
+  else
+    rm -f "$base/current"
   fi
-  if [[ -n $previous_frontend ]]; then ln -s "$previous_frontend" "$base/frontend.rollback"; mv -Tf "$base/frontend.rollback" "$base/frontend"; fi
+  if [[ -n $previous_frontend ]]; then
+    ln -s "$previous_frontend" "$base/frontend.rollback"
+    mv -Tf "$base/frontend.rollback" "$base/frontend"
+  elif [[ -L "$base/frontend" ]]; then
+    rm -f "$base/frontend"
+  fi
   if [[ -n $previous_env ]]; then cp -a "$previous_env" /etc/nbd.env; fi
   if [[ -n $previous_site ]]; then cp -a "$previous_site" "$site"; else rm -f /etc/nginx/sites-enabled/nbd.dkz12345.com "$site"; fi
   nginx -t && systemctl reload nginx
@@ -65,7 +72,8 @@ if [[ -z $previous_frontend ]]; then
   install -d -m 755 "$base/frontend-releases/initial"
   cp "$release/public/index.html" "$base/frontend-releases/initial/index.html"
   chmod 644 "$base/frontend-releases/initial/index.html"
-  ln -s "$base/frontend-releases/initial" "$base/frontend"
+  ln -s "$base/frontend-releases/initial" "$base/frontend.next"
+  mv -Tf "$base/frontend.next" "$base/frontend"
 fi
 systemctl daemon-reload
 systemctl enable --now nbd nbd-backup.timer
