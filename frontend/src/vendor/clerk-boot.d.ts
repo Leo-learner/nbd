@@ -3,7 +3,7 @@ export interface ClerkSessionLike {
   getToken(options?: { skipCache?: boolean }): Promise<string | null>;
 }
 export interface ClerkLike {
-  user: { id: string } | null | undefined;
+  user: { id: string; twoFactorEnabled?: boolean } | null | undefined;
   session: ClerkSessionLike | null | undefined;
   load(): Promise<void>;
   addListener(listener: (resources: { user?: { id: string } | null }) => void): () => void;

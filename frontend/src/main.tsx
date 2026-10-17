@@ -12,6 +12,7 @@ import {
   type UIContext,
 } from "./shared";
 import {
+  accountPageUrl,
   loadClerk,
   requireSignIn,
   signOut,
@@ -76,12 +77,26 @@ function safeNext(value: string | null) {
 }
 // Sign-in happens on the shared dkz12345 account page; this screen only says
 // why NBD is not open yet and offers the one action that fixes it.
-function Gate({ access }: { access: Exclude<Access, "owner"> }) {
-  const copy =
-    access === "reauth-required"
+function Gate({
+  access,
+  noSecondFactor = false,
+}: {
+  access: Exclude<Access, "owner">;
+  noSecondFactor?: boolean;
+}) {
+  // Without a second factor on the account, signing in again can never pass the
+  // owner policy, so point at the account settings instead of looping.
+  const setup = access === "reauth-required" && noSecondFactor;
+  const copy = setup
+    ? {
+        title: "先开启两步验证",
+        body: "NBD 要求每次登录都经过两步验证，但这个统一账号还没有设置。请在账号设置的「安全」里添加身份验证器 App（或通行密钥），然后回到这里重新登录。",
+        action: "已开启，重新登录",
+      }
+    : access === "reauth-required"
       ? {
           title: "需要重新验证身份",
-          body: "为了保护私人记录，NBD 要求一小时内验证过密码和两步验证。点下面的按钮会退出统一账号，重新登录后自动回到这里。",
+          body: "为了保护私人记录，NBD 要求一小时内完成登录和两步验证。点下面的按钮会退出统一账号，重新登录后自动回到这里。",
           action: "重新验证",
         }
       : access === "not-owner"
@@ -120,8 +135,18 @@ function Gate({ access }: { access: Exclude<Access, "owner"> }) {
             <>
               <h1>{copy.title}</h1>
               <p>{copy.body}</p>
+              {setup && (
+                <a
+                  className="button button-primary"
+                  href={accountPageUrl()}
+                  target="_blank"
+                  rel="noopener"
+                >
+                  打开账号设置
+                </a>
+              )}
               <Button
-                tone="primary"
+                tone={setup ? "secondary" : "primary"}
                 onClick={() => void signOut(location.href)}
               >
                 {copy.action}
@@ -360,7 +385,10 @@ function App() {
     );
   if (user === null)
     return (
-      <Gate access={access === "owner" || !access ? "signed-out" : access} />
+      <Gate
+        access={access === "owner" || !access ? "signed-out" : access}
+        noSecondFactor={clerk.current?.user?.twoFactorEnabled === false}
+      />
     );
   const path = route.split("?")[0],
     match = path.match(/^\/moments\/([^/]+)(?:\/(reflect|revisions))?$/),
