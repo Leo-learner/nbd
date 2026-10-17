@@ -1,9 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { fixture, password } from "../fixture.js";
+import { fixture } from "../fixture.js";
 import { createConfig } from "../../src/config.js";
 import { openDb, migrate } from "../../src/db/index.js";
 import { buildApp } from "../../src/app.js";
@@ -21,6 +22,15 @@ test("production responses keep explicit security headers and a restrictive CSP"
         dataDir: dir,
         publicDir: join(dir, "absent"),
         logger: false,
+        // Production refuses to start without the shared Clerk sign-in settings.
+        clerk: {
+          publishableKey: "pk_live_Y2xlcmsuZGt6MTIzNDUuY29tJA",
+          jwtKey: readFileSync(
+            new URL("../../deploy/clerk-dkz12345.pub", import.meta.url),
+            "utf8",
+          ),
+          ownerUserId: "user_owner",
+        },
       },
       {},
     ),
@@ -37,8 +47,14 @@ test("production responses keep explicit security headers and a restrictive CSP"
     assert.equal(response.headers["x-frame-options"], "DENY");
     const csp = String(response.headers["content-security-policy"]);
     assert.match(csp, /default-src 'self'/);
-    assert.match(csp, /script-src 'self'/);
-    assert.match(csp, /connect-src 'self'/);
+    assert.match(
+      csp,
+      /script-src 'self' https:\/\/clerk\.dkz12345\.com https:\/\/\*\.protect\.clerk\.com;/,
+    );
+    assert.match(
+      csp,
+      /connect-src 'self' https:\/\/clerk\.dkz12345\.com https:\/\/\*\.protect\.clerk\.com:\*;/,
+    );
     assert.match(csp, /frame-ancestors 'none'/);
     assert.doesNotMatch(csp, /script-src[^;]*'unsafe-inline'/);
   } finally {
@@ -52,9 +68,10 @@ test("spoofed forwarding headers are ignored by the app and overwritten by Nginx
   const f = await fixture();
   try {
     const response = await f.app.inject({
-      method: "POST",
-      url: "/api/v1/auth/login",
+      method: "PATCH",
+      url: "/api/v1/settings",
       headers: {
+        cookie: f.cookie,
         "x-nbd-request": "1",
         "x-forwarded-for": "198.51.100.88",
         "x-real-ip": "203.0.113.55",
@@ -62,12 +79,12 @@ test("spoofed forwarding headers are ignored by the app and overwritten by Nginx
         "x-forwarded-proto": "https",
         forwarded: "for=192.0.2.77;host=attacker.invalid;proto=https",
       },
-      payload: { username: "leo", password },
+      payload: { timezone: "Asia/Shanghai" },
     });
-    assert.equal(response.statusCode, 200);
+    assert.equal(response.statusCode, 200, response.body);
     const audit = f.db
       .prepare(
-        "SELECT ip FROM audit_events WHERE action='auth.login' ORDER BY id DESC LIMIT 1",
+        "SELECT ip FROM audit_events WHERE action='updateSettings' ORDER BY id DESC LIMIT 1",
       )
       .get() as { ip: string };
     assert.equal(audit.ip, "127.0.0.1");

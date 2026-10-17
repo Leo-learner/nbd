@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import { randomBytes, createHash } from "node:crypto";
-import { fixture, password } from "./fixture.js";
+import { fixture } from "./fixture.js";
 async function oauthFixture() {
   let origin = "";
   const server = createServer((req, res) => {
@@ -24,8 +24,10 @@ async function oauthFixture() {
     clientId = origin + "/client.json",
     redirectUri = origin + "/callback",
     resource = f.config.publicOrigin + "/mcp";
-  const begin = async (extra: Record<string, string> = {}) =>
+  // Signed in as the owner unless a test passes another Clerk cookie ("" = none).
+  const begin = async (extra: Record<string, string> = {}, cookie = f.cookie) =>
     f.app.inject({
+      headers: cookie ? { cookie } : {},
       url:
         "/oauth/authorize?" +
         new URLSearchParams({
@@ -370,51 +372,43 @@ test("弃用的未换码授权在一小时后撤销，已签发授权保留", as
   }
 });
 
-test("OAuth 密码错误重显表单，保留请求 CSRF 和勾选但不回显凭据", async () => {
+test("没有有效统一账号会话时，授权页和提交都绕回 /login 再回来", async () => {
   const f = await oauthFixture();
   try {
+    const seconds = Math.floor(Date.now() / 1000);
+    for (const cookie of [
+      "",
+      f.clerkCookie({ sub: "user_someone_else" }),
+      f.clerkCookie({ fva: [61, 0] }),
+      f.clerkCookie({ iat: seconds - 600, nbf: seconds - 600, exp: seconds - 300 }),
+    ]) {
+      const r = await f.begin({}, cookie);
+      assert.equal(r.statusCode, 303, cookie);
+      const next = new URL(r.headers.location!, "http://x").searchParams.get("next")!;
+      assert.ok(next.startsWith("/oauth/authorize?"), next);
+    }
     const begin = await f.begin(),
       requestId = begin.body.match(/name="requestId" value="([^"]+)"/)![1],
       csrf = begin.body.match(/name="csrf" value="([^"]+)"/)![1],
-      cookie = String(begin.headers["set-cookie"]).split(";")[0];
-    const submit = (pass: string) =>
-      f.app.inject({
-        method: "POST",
-        url: "/oauth/authorize",
-        headers: {
-          cookie,
-          "content-type": "application/x-www-form-urlencoded",
-          origin: f.config.publicOrigin,
-        },
-        payload: new URLSearchParams({
-          requestId,
-          csrf,
-          decision: "approve",
-          write: "1",
-          username: "leo",
-          password: pass,
-        }).toString(),
-      });
-    const retry = await submit("incorrect-password");
-    assert.equal(retry.statusCode, 401, retry.body);
-    assert.match(String(retry.headers["content-type"]), /^text\/html/);
-    assert.ok(retry.body.includes("用户名或密码错误"));
-    assert.ok(retry.body.includes(`name="requestId" value="${requestId}"`));
-    assert.ok(retry.body.includes(`name="csrf" value="${csrf}"`));
-    assert.ok(!retry.body.includes("incorrect-password"));
-    assert.ok(retry.body.includes('name="write" value="1" checked'));
-    assert.ok(retry.body.includes('name="read" value="1">'));
-    assert.ok(
-      String(retry.headers["content-security-policy"]).endsWith(
-        `form-action 'self' ${new URL(f.redirectUri).origin}`,
-      ),
-    );
-    assert.equal((await submit(password)).statusCode, 302);
+      returnTo = begin.body.match(/name="returnTo" value="([^"]+)"/)![1].replace(/&amp;/g, "&");
+    assert.ok(!begin.body.includes('name="password"'));
+    const late = await f.app.inject({
+      method: "POST",
+      url: "/oauth/authorize",
+      headers: {
+        cookie: String(begin.headers["set-cookie"]).split(";")[0],
+        "content-type": "application/x-www-form-urlencoded",
+        origin: f.config.publicOrigin,
+      },
+      payload: new URLSearchParams({ requestId, csrf, returnTo, decision: "approve", write: "1" }).toString(),
+    });
+    assert.equal(late.statusCode, 303);
+    assert.equal(late.headers.location, `/login?next=${encodeURIComponent(returnTo)}`);
+    assert.equal((await f.approve(begin)).statusCode, 302);
   } finally {
     await f.close();
   }
 });
-
 test("OAuth grant_type 优先校验，未知类型不被缺少 client/resource 掩盖", async () => {
   const f = await oauthFixture();
   try {
@@ -475,37 +469,13 @@ test("OAuth 错误保留 429/Retry-After，服务错误返回 server_error 而�
   }
 });
 
-test("OAuth 登录失败可见于单所有者审计，成功标识实际用户名", async () => {
+test("OAuth 授权写入单所有者审计并标识实际用户名", async () => {
   const f = await oauthFixture();
   try {
-    const begin = await f.begin(),
-      requestId = begin.body.match(/name="requestId" value="([^"]+)"/)![1],
-      csrf = begin.body.match(/name="csrf" value="([^"]+)"/)![1],
-      cookie = String(begin.headers["set-cookie"]).split(";")[0];
-    const submit = (pass: string) =>
-      f.app.inject({
-        method: "POST",
-        url: "/oauth/authorize",
-        headers: { cookie },
-        payload: {
-          requestId,
-          csrf,
-          decision: "approve",
-          write: "1",
-          username: "LEO",
-          password: pass,
-        },
-      });
-    assert.equal((await submit("incorrect-password")).statusCode, 401);
-    let audit = f.s.data
+    assert.equal((await f.approve(await f.begin())).statusCode, 302);
+    const audit = f.s.data
       .audit(f.owner, { channel: "oauth" })
-      .items.find((item: any) => item.action === "oauth.login");
-    assert.equal(audit.status, "error");
-    assert.equal(audit.actor.label, "未登录");
-    assert.equal((await submit(password)).statusCode, 302);
-    audit = f.s.data
-      .audit(f.owner, { channel: "oauth" })
-      .items.find((item: any) => item.action === "oauth.login");
+      .items.find((item: any) => item.action === "oauth.authorize");
     assert.equal(audit.status, "success");
     assert.equal(audit.actor.label, "leo");
     assert.equal(audit.actor.kind, "owner");
@@ -513,7 +483,6 @@ test("OAuth 登录失败可见于单所有者审计，成功标识实际用户�
     await f.close();
   }
 });
-
 test("换码签发中途失败时回滚撤销旧授权与消费授权码", async () => {
   const f = await oauthFixture();
   try {

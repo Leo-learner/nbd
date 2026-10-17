@@ -9,7 +9,7 @@ import { apiContract, dereference, mcpContract } from "../src/contract.js";
 const addFormats = createRequire(import.meta.url)(
   "ajv-formats",
 ) as import("ajv-formats").FormatsPlugin;
-test("服务端生成契约包含全部 48 个操作，路径、输入必填字段和状态码一致", async () => {
+test("服务端生成契约包含全部 44 个操作，路径、输入必填字段和状态码一致", async () => {
   const f = await fixture();
   try {
     const generated = f.app.swagger() as any;
@@ -45,7 +45,7 @@ test("服务端生成契约包含全部 48 个操作，路径、输入必填字�
         }
       }
     }
-    assert.equal(count, 48);
+    assert.equal(count, 44);
   } finally {
     await f.close();
   }

@@ -12,7 +12,6 @@ const db = openDb(config.dataDir);
 try {
   migrate(db, config.now());
   const s = createServices(db, config);
-  await s.auth.init();
   let u = db.prepare("SELECT * FROM users LIMIT 1").get() as Row | undefined;
   if (!u) u = await s.auth.createOwner("demo", "NbdDemo-LocalOnly-2026");
   const owner = ownerPrincipal(u as { id: string; display_name: string }),

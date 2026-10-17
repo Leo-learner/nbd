@@ -15,7 +15,7 @@ import {
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
-import { fixture, momentInput, password } from "../fixture.js";
+import { fixture, momentInput } from "../fixture.js";
 
 const repository = new URL("../..", import.meta.url);
 const releasePruner = new URL(
@@ -63,48 +63,6 @@ test("atomic release switching ignores stale temporary links and validates rollb
     assert.ok(!(await readdir(dir)).some((name) => name.startsWith(".nbd-switch-")));
   } finally {
     await rm(dir, { recursive: true, force: true });
-  }
-});
-
-test("admin reset-password reads the new credential from stdin and invalidates old sessions", async () => {
-  const f = await fixture();
-  const replacement = "Nbd-Reset-Secret-2026";
-  try {
-    const result = spawnSync(
-      process.execPath,
-      ["--import", "tsx", "scripts/admin.ts", "reset-password", "leo"],
-      {
-        cwd: repository,
-        env: { ...process.env, NODE_ENV: "test", DATA_DIR: f.dir },
-        input: replacement,
-        encoding: "utf8",
-        timeout: 30000,
-      },
-    );
-    assert.equal(result.status, 0, result.stderr);
-    assert.equal(result.stdout.trim(), '{"ok":true}');
-    assert.doesNotMatch(result.stdout + result.stderr, /Nbd-Reset-Secret-2026/);
-    assert.equal((await f.api("GET", "/moments")).statusCode, 401);
-    assert.equal(
-      (
-        await f.api("POST", "/auth/login", {
-          username: "leo",
-          password,
-        })
-      ).statusCode,
-      401,
-    );
-    assert.equal(
-      (
-        await f.api("POST", "/auth/login", {
-          username: "leo",
-          password: replacement,
-        })
-      ).statusCode,
-      200,
-    );
-  } finally {
-    await f.close();
   }
 });
 

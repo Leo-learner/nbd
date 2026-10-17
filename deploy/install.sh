@@ -74,7 +74,11 @@ if [[ ! -d $release ]]; then
   chown -R root:root "$release"
 fi
 install -m 644 "$release/deploy/nginx-logformat.conf" /etc/nginx/conf.d/nbd-logformat.conf
+# Shared dkz12345 Clerk sign-in: the instance's JWT public key (not a secret).
+install -m 644 "$release/deploy/clerk-dkz12345.pub" /etc/nbd-clerk-jwt.pem
 install -m 640 -o root -g nbd "$release/deploy/nbd.env" /etc/nbd.env
+# Server-only settings kept out of the public repository (OWNER_CLERK_USER_ID).
+if [[ -f /etc/nbd.local.env ]]; then cat /etc/nbd.local.env >> /etc/nbd.env; fi
 if [[ -n $previous ]]; then (cd "$previous" && runuser -u nbd -- node --env-file=/etc/nbd.env dist/scripts/admin.js backup); fi
 systemctl stop nbd 2>/dev/null || true
 (cd "$release" && runuser -u nbd -- node --env-file=/etc/nbd.env dist/scripts/admin.js migrate)

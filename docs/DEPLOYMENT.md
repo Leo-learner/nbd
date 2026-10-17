@@ -126,7 +126,7 @@ bash scripts/deploy-frontend.sh
 
 | 凭据 | 存放 | 轮换和撤销 |
 |---|---|---|
-| 所有者密码 | 只在所有者的密码管理器里；服务器只存 argon2id | 网页「设置」里修改（其他会话全部失效）；忘了就在服务器上用 `admin.js reset-password leo` 重置（撤销全部会话） |
+| 所有者登录 | dkz12345 统一账号（Clerk）；服务器只放 Clerk 实例的 JWT **公钥**（install.sh 装到 `/etc/nbd-clerk-jwt.pem`）和 `OWNER_CLERK_USER_ID`（只在服务器的 `/etc/nbd.local.env`，install.sh 追加进 `/etc/nbd.env`），不放 Clerk 私钥 | 密码、两步验证和已登录设备都在 https://accounts.dkz12345.com/user 管理；NBD 只接受主人一小时内验证过两个因子的会话 |
 | Agent 密钥 | 明文只在本机 `docs/deployment-private/*.env`（600）；服务器只存 SHA-256 | 新签一把 → 更新客户端 → 确认能用 → 撤销旧的。Claude Code 只需要改 env 文件，headersHelper 下次连接自动生效 |
 | OAuth 授权 | 服务器只存令牌哈希 | 网页「设置 → 已连接的应用」里断开；客户端重新连接即可 |
 | TLS 证书 | `/etc/letsencrypt/live/nbd.dkz12345.com/` | `certbot.timer` 自动续期；续期钩子 reload nginx |
