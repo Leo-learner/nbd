@@ -6,18 +6,6 @@ import { apiContract, dereference, project } from "../contract.js";
 import { ownerPrincipal, type Principal } from "../modules/principal.js";
 import { publicUser } from "../modules/auth.js";
 import { fail } from "../errors.js";
-export function cookieName(s: Services) {
-  return s.config.secureCookie ? "__Host-nbd_sid" : "nbd_sid";
-}
-export function setSession(reply: FastifyReply, s: Services, token: string) {
-  reply.setCookie(cookieName(s), token, {
-    path: "/",
-    httpOnly: true,
-    secure: s.config.secureCookie,
-    sameSite: "lax",
-    maxAge: s.config.sessionDays * 86400,
-  });
-}
 export async function registerApi(app: FastifyInstance, s: Services) {
   await app.register(async (api) => {
     api.addHook("onRequest", async (req, reply) => {
@@ -34,14 +22,10 @@ export async function registerApi(app: FastifyInstance, s: Services) {
         req.headers["x-nbd-request"] !== "1"
       )
         fail(403, "REQUEST_HEADER_REQUIRED", "请提供 X-NBD-Request: 1");
-      const session = s.auth.lookup(req.cookies[cookieName(s)]);
-      if (session) {
-        (req as any).owner = session.user;
-        if (session.renew) {
-          s.auth.touch(req.cookies[cookieName(s)]!);
-          setSession(reply, s, req.cookies[cookieName(s)]!);
-        }
-      }
+      // Signed in with the shared dkz12345 Clerk account (the __session cookie).
+      const access = await s.owner.check(req.headers);
+      if (access.ok) (req as any).owner = access.user;
+      else (req as any).ownerAccess = access.access;
     });
     const handlers: Record<
       string,
@@ -56,46 +40,8 @@ export async function registerApi(app: FastifyInstance, s: Services) {
       getMeta: () => s.data.meta(),
       getMe: (_p, _a, _v, req) => ({
         user: (req as any).owner ? publicUser((req as any).owner) : null,
+        access: (req as any).owner ? "owner" : (req as any).ownerAccess,
       }),
-      login: async (_p, a, _v, req, reply) => {
-        const audit = s.audit.start(null, "auth.login", "web", req.id, req.ip);
-        try {
-          const user = await s.auth.login(a.username, a.password);
-          const token = s.auth.issue(user.id, req.cookies[cookieName(s)]);
-          setSession(reply, s, token);
-          s.audit.attachUser(audit, user.id);
-          s.audit.finish(audit, "success");
-          return { user: publicUser(user) };
-        } catch (e) {
-          s.audit.finish(audit, "error", "INVALID_CREDENTIALS");
-          throw e;
-        }
-      },
-      logout: (_p, _a, _v, req, reply) => {
-        s.auth.logout(req.cookies[cookieName(s)]);
-        reply.clearCookie(cookieName(s), {
-          path: "/",
-          secure: s.config.secureCookie,
-        });
-        return { ok: true };
-      },
-      logoutAll: (p, _a, _v, _req, reply) => {
-        s.auth.logoutAll(p.userId);
-        reply.clearCookie(cookieName(s), {
-          path: "/",
-          secure: s.config.secureCookie,
-        });
-        return { ok: true };
-      },
-      changePassword: async (p, a, _v, _req, reply) => {
-        await s.auth.changePassword(
-          s.auth.user(p.userId),
-          a.currentPassword,
-          a.newPassword,
-        );
-        setSession(reply, s, s.auth.issue(p.userId));
-        return { ok: true };
-      },
       listMoments: (p, a) => s.moments.list(p, a),
       getMoment: (p, _a, v) => s.moments.detail(p, v.momentId),
       updateMoment: (p, a, v) => {
@@ -133,14 +79,8 @@ export async function registerApi(app: FastifyInstance, s: Services) {
       getInsightsDecay: (p, a) => s.insights.decay(p, a),
       getInsightsCalendar: (p, a) => s.insights.calendar(p, a),
       listAgentKeys: (p) => s.access.list(p),
-      createAgentKey: async (p, a) => {
-        const u = s.auth.user(p.userId);
-        if (!(await s.auth.verify(a.currentPassword, u.password_hash)))
-          fail(403, "PASSWORD_INCORRECT", "当前密码错误");
-        if (s.auth.user(p.userId).password_hash !== u.password_hash)
-          fail(409, "ACCOUNT_CHANGED", "账号凭证已变化");
-        return s.access.create(p, a);
-      },
+      // The owner session is already MFA-verified within the last hour (owner policy).
+      createAgentKey: (p, a) => s.access.create(p, a),
       revokeAgentKey: (p, _a, v) => s.access.revoke(p, v.keyId),
       listConnectedApps: (p) => s.access.apps(p),
       revokeConnectedApp: (p, _a, v) => s.access.revokeApp(p, v.appId),
@@ -155,7 +95,7 @@ export async function registerApi(app: FastifyInstance, s: Services) {
       },
       listAudit: (p, a) => s.data.audit(p, a),
     };
-    const publicOperations = new Set(["getMeta", "getMe", "login", "logout"]);
+    const publicOperations = new Set(["getMeta", "getMe"]);
     for (const [path, operations] of Object.entries(apiContract.paths) as [
       string,
       Row,
@@ -228,19 +168,20 @@ export async function registerApi(app: FastifyInstance, s: Services) {
           bodyLimit: 128 * 1024,
           config: {
             rateLimit: {
-              max:
-                id === "login"
-                  ? 10
-                  : ["changePassword", "createAgentKey"].includes(id)
-                    ? 5
-                    : 300,
+              max: id === "createAgentKey" ? 5 : 300,
               timeWindow: "1 minute",
             },
           },
           handler: async (req, reply) => {
             const user = (req as any).owner as Row | undefined;
-            if (!user && !publicOperations.has(id))
+            if (!user && !publicOperations.has(id)) {
+              const access = (req as any).ownerAccess;
+              if (access === "not-owner")
+                fail(403, "NOT_OWNER", "这个账号不是 NBD 的主人");
+              if (access === "reauth-required")
+                fail(403, "REAUTH_REQUIRED", "请重新验证身份后继续");
               fail(401, "UNAUTHENTICATED", "请先登录");
+            }
             const p = user
                 ? ownerPrincipal(user as { id: string; display_name: string })
                 : null,
@@ -250,12 +191,8 @@ export async function registerApi(app: FastifyInstance, s: Services) {
               p && write ? s.audit.start(p, id, "web", req.id, req.ip) : null;
             try {
               let result: unknown;
-              // Async password operations own their transaction; synchronous domain writes share audit/idempotency commit.
-              if (
-                p &&
-                write &&
-                !["login", "changePassword", "createAgentKey"].includes(id)
-              )
+              // Writes share one transaction with their audit row and idempotency record.
+              if (p && write)
                 result = s.db
                   .transaction(() => {
                     const output = s.idempotency.run(

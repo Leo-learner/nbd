@@ -248,127 +248,13 @@ paths:
         "500":
           $ref: "#/components/responses/InternalError"
       x-nbd-error-codes: []
-  /api/v1/auth/login:
-    post:
-      operationId: login
-      tags:
-        - auth
-      summary: 登录
-      description: 成功后设置会话 Cookie 并轮换会话。用户名不存在和密码错误都返回 401 INVALID_CREDENTIALS。没有注册接口，所有者账号由服务器 CLI 创建。
-      security: []
-      parameters:
-        - $ref: "#/components/parameters/XNbdRequest"
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/LoginRequest"
-      responses:
-        "200":
-          description: 成功
-          headers:
-            X-Request-Id:
-              $ref: "#/components/headers/XRequestId"
-            Set-Cookie:
-              description: 生产环境为 __Host-nbd_sid=…; HttpOnly; Secure; SameSite=Lax; Path=/
-              schema:
-                type: string
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/UserResponse"
-        "400":
-          $ref: "#/components/responses/BadRequest"
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-        "403":
-          $ref: "#/components/responses/Forbidden"
-        "413":
-          $ref: "#/components/responses/PayloadTooLarge"
-        "429":
-          $ref: "#/components/responses/TooManyRequests"
-        "500":
-          $ref: "#/components/responses/InternalError"
-      x-nbd-error-codes:
-        - VALIDATION_ERROR
-        - INVALID_CREDENTIALS
-        - AUTH_BUSY
-        - RATE_LIMITED
-        - REQUEST_HEADER_REQUIRED
-        - ORIGIN_REJECTED
-  /api/v1/auth/logout:
-    post:
-      operationId: logout
-      tags:
-        - auth
-      summary: 退出当前会话
-      description: 没有登录也返回成功。
-      security: []
-      parameters:
-        - $ref: "#/components/parameters/XNbdRequest"
-      responses:
-        "200":
-          description: 成功
-          headers:
-            X-Request-Id:
-              $ref: "#/components/headers/XRequestId"
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Ok"
-        "400":
-          $ref: "#/components/responses/BadRequest"
-        "403":
-          $ref: "#/components/responses/Forbidden"
-        "429":
-          $ref: "#/components/responses/TooManyRequests"
-        "500":
-          $ref: "#/components/responses/InternalError"
-      x-nbd-error-codes:
-        - REQUEST_HEADER_REQUIRED
-        - ORIGIN_REJECTED
-  /api/v1/auth/logout-all:
-    post:
-      operationId: logoutAll
-      tags:
-        - auth
-      summary: 退出所有会话
-      security:
-        - cookieAuth: []
-      parameters:
-        - $ref: "#/components/parameters/XNbdRequest"
-      responses:
-        "200":
-          description: 成功
-          headers:
-            X-Request-Id:
-              $ref: "#/components/headers/XRequestId"
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Ok"
-        "400":
-          $ref: "#/components/responses/BadRequest"
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-        "403":
-          $ref: "#/components/responses/Forbidden"
-        "429":
-          $ref: "#/components/responses/TooManyRequests"
-        "500":
-          $ref: "#/components/responses/InternalError"
-      x-nbd-error-codes:
-        - AUTH_REQUIRED
-        - REQUEST_HEADER_REQUIRED
-        - ORIGIN_REJECTED
   /api/v1/auth/me:
     get:
       operationId: getMe
       tags:
         - auth
       summary: 当前用户
-      description: '未登录时返回 {"user": null}，不返回 401。'
+      description: '用 dkz12345 统一账号（Clerk 会话 Cookie）登录。没有有效会话时返回 {"user": null, "access": ...}，不返回 401：signed-out 表示需要登录，reauth-required 表示超过 1 小时需要重新验证两个因子，not-owner 表示登录的不是主人。'
       security: []
       responses:
         "200":
@@ -385,50 +271,6 @@ paths:
         "500":
           $ref: "#/components/responses/InternalError"
       x-nbd-error-codes: []
-  /api/v1/auth/password:
-    put:
-      operationId: changePassword
-      tags:
-        - auth
-      summary: 修改密码
-      description: 校验当前密码后修改；其他会话全部失效，当前会话轮换。
-      security:
-        - cookieAuth: []
-      parameters:
-        - $ref: "#/components/parameters/XNbdRequest"
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/PasswordChange"
-      responses:
-        "200":
-          description: 成功
-          headers:
-            X-Request-Id:
-              $ref: "#/components/headers/XRequestId"
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Ok"
-        "400":
-          $ref: "#/components/responses/BadRequest"
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-        "403":
-          $ref: "#/components/responses/Forbidden"
-        "413":
-          $ref: "#/components/responses/PayloadTooLarge"
-        "429":
-          $ref: "#/components/responses/TooManyRequests"
-        "500":
-          $ref: "#/components/responses/InternalError"
-      x-nbd-error-codes:
-        - VALIDATION_ERROR
-        - AUTH_REQUIRED
-        - PASSWORD_INCORRECT
-        - AUTH_BUSY
   /api/v1/moments:
     get:
       operationId: listMoments
@@ -2123,9 +1965,7 @@ paths:
           $ref: "#/components/responses/InternalError"
       x-nbd-error-codes:
         - VALIDATION_ERROR
-        - PASSWORD_INCORRECT
         - TOO_MANY_KEYS
-        - AUTH_BUSY
   /api/v1/agent-keys/{keyId}:
     delete:
       operationId: revokeAgentKey
@@ -2527,7 +2367,7 @@ components:
               message: 请先登录
             requestId: req-1a2b
     Forbidden:
-      description: 请求防护或权限失败
+      description: 请求防护或权限失败；NOT_OWNER（登录的不是主人）或 REAUTH_REQUIRED（需要重新验证身份）
       headers:
         X-Request-Id:
           $ref: "#/components/headers/XRequestId"
@@ -2906,7 +2746,16 @@ components:
       additionalProperties: false
       required:
         - user
+        - access
       properties:
+        access:
+          type: string
+          enum:
+            - owner
+            - signed-out
+            - reauth-required
+            - not-owner
+          description: 当前浏览器的统一账号状态
         user:
           type: object
           additionalProperties: false
@@ -2942,39 +2791,6 @@ components:
               format: date-time
               description: Instant：UTC ISO 8601，精确到毫秒
           nullable: true
-    LoginRequest:
-      type: object
-      additionalProperties: false
-      required:
-        - username
-        - password
-      properties:
-        username:
-          type: string
-          minLength: 3
-          maxLength: 20
-          description: 大小写不敏感
-          pattern: ^[A-Za-z0-9_]+$
-        password:
-          type: string
-          minLength: 1
-          maxLength: 128
-    PasswordChange:
-      type: object
-      additionalProperties: false
-      required:
-        - currentPassword
-        - newPassword
-      properties:
-        currentPassword:
-          type: string
-          minLength: 1
-          maxLength: 128
-        newPassword:
-          type: string
-          minLength: 12
-          maxLength: 128
-          description: 至少 12 个字符
     Settings:
       type: object
       additionalProperties: false
@@ -4944,7 +4760,6 @@ components:
       required:
         - label
         - scopes
-        - currentPassword
       properties:
         label:
           type: string
@@ -4964,11 +4779,6 @@ components:
           minimum: 1
           maximum: 365
           default: 365
-        currentPassword:
-          type: string
-          minLength: 1
-          maxLength: 128
-          description: 再输一次当前密码，防止被盗的 Cookie 换出长期密钥
     AgentKeyCreated:
       type: object
       additionalProperties: false

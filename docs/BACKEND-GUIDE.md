@@ -54,7 +54,7 @@ nbd/
       authorize.ts       # 确认页（服务端渲染）和提交
       token.ts revoke.ts tokens.ts
   scripts/
-    admin.ts             # migrate、create-owner、reset-password、create-agent-key、revoke-agent-key、backup、verify-backup、restore
+    admin.ts             # migrate、create-owner、create-agent-key、revoke-agent-key、backup、verify-backup、restore
     seed.ts              # 本地开发种子数据（拒绝在 NODE_ENV=production 下运行）
     generate-contract.ts # 生成 docs/openapi.json 和 sdk/generated.ts
     deploy.sh            # 后端发版（照搬 Game Hub）

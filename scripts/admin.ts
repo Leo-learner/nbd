@@ -36,13 +36,9 @@ try {
       } else {
         assertMigrated(db);
         const s = createServices(db, config);
-        await s.auth.init();
         if (command === "create-owner") {
           const u = await s.auth.createOwner(args[0] ?? "leo", await stdin());
           console.log(JSON.stringify({ id: u.id, username: u.username }));
-        } else if (command === "reset-password") {
-          await s.auth.resetPassword(args[0] ?? "leo", await stdin());
-          console.log(JSON.stringify({ ok: true }));
         } else if (command === "backup")
           console.log(JSON.stringify(await backup(db, config)));
         else {
@@ -74,7 +70,7 @@ try {
             console.log(JSON.stringify({ ok: true }));
           } else
             throw Error(
-              "Usage: admin migrate|create-owner|reset-password|create-agent-key|revoke-agent-key|backup|verify-backup|restore|cleanup",
+              "Usage: admin migrate|create-owner|create-agent-key|revoke-agent-key|backup|verify-backup|restore|cleanup",
             );
         }
       }

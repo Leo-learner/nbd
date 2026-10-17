@@ -1,3 +1,4 @@
+import { accountPageUrl, signOut } from "../vendor/clerk-boot.js";
 import {
   Children,
   cloneElement,
@@ -1321,8 +1322,6 @@ export function AccessPage() {
   const [expiresInDays, setExpiresInDays] = useState(365);
   const [read, setRead] = useState(true);
   const [write, setWrite] = useState(true);
-  const [currentPassword, setCurrentPassword] = useState("");
-  const [passwordError, setPasswordError] = useState(false);
   const [secretResult, setSecretResult] = useState<CreatedAgentKey | null>(
     null,
   );
@@ -1333,27 +1332,20 @@ export function AccessPage() {
   async function createKey(event: FormEvent) {
     event.preventDefault();
     if (!name.trim() || (!read && !write)) return;
-    setPasswordError(false);
-    const ok = await mutation.run(
-      async () => {
-        const created = await api<CreatedAgentKey>("POST", "/agent-keys", {
-          label: name.trim(),
-          scopes: [...(read ? ["read"] : []), ...(write ? ["write"] : [])],
-          expiresInDays,
-          currentPassword,
-        });
-        setSecretResult(created);
-        setCurrentPassword("");
-        setName("");
-        setFormOpen(false);
-        await keys.reload();
-        return created;
-      },
-      (reason) => {
-        if (reason instanceof ApiError && reason.code === "PASSWORD_INCORRECT")
-          setPasswordError(true);
-      },
-    );
+    // No password re-entry: NBD only accepts an owner session whose two
+    // factors were verified within the last hour.
+    const ok = await mutation.run(async () => {
+      const created = await api<CreatedAgentKey>("POST", "/agent-keys", {
+        label: name.trim(),
+        scopes: [...(read ? ["read"] : []), ...(write ? ["write"] : [])],
+        expiresInDays,
+      });
+      setSecretResult(created);
+      setName("");
+      setFormOpen(false);
+      await keys.reload();
+      return created;
+    });
     if (ok) notify("Agent 密钥已生成，请现在复制保存");
   }
   async function revokeKey(key: AgentKeyList["items"][number]) {
@@ -1556,30 +1548,7 @@ export function AccessPage() {
                       : "可单独选择读取历史和记录与补记权限。"}
                 </p>
               </fieldset>
-              <Field
-                label="再输一次当前密码"
-                hint="防止有人拿到你的登录状态后，悄悄换出一把长期密钥。"
-              >
-                <input
-                  type="password"
-                  autoComplete="current-password"
-                  required
-                  aria-invalid={passwordError || undefined}
-                  value={currentPassword}
-                  onChange={(event) => {
-                    setCurrentPassword(event.target.value);
-                    setPasswordError(false);
-                  }}
-                />
-                {passwordError && <span className="field-error">密码不对</span>}
-              </Field>
-              {mutation.error != null &&
-              !(
-                mutation.error instanceof ApiError &&
-                mutation.error.code === "PASSWORD_INCORRECT"
-              ) ? (
-                <FormError error={mutation.error} />
-              ) : null}
+              <FormError error={mutation.error} />
               {mutation.retrySeconds > 0 && (
                 <p role="status" className="management-note">
                   太频繁了，请等 {mutation.retrySeconds} 秒后再试。
@@ -1715,10 +1684,6 @@ export function SettingsPage() {
   const [displayName, setDisplayName] = useState("");
   const [timezone, setTimezone] = useState("");
   const [weekStartsOn, setWeekStartsOn] = useState(1);
-  const [currentPassword, setCurrentPassword] = useState("");
-  const [newPassword, setNewPassword] = useState("");
-  const [confirmPassword, setConfirmPassword] = useState("");
-  const [passwordError, setPasswordError] = useState(false);
   const zones = useMemo(() => {
     const supported =
       typeof Intl.supportedValuesOf === "function"
@@ -1750,45 +1715,13 @@ export function SettingsPage() {
     });
     if (ok) app.notify("设置已保存");
   }
-  async function savePassword(event: FormEvent) {
-    event.preventDefault();
-    setPasswordError(false);
-    if (
-      newPassword.length < Math.max(12, app.meta.limits.passwordMin) ||
-      newPassword !== confirmPassword
-    )
-      return;
-    const ok = await mutation.run(
-      () => api("PUT", "/auth/password", { currentPassword, newPassword }),
-      (reason) => {
-        if (reason instanceof ApiError && reason.code === "PASSWORD_INCORRECT")
-          setPasswordError(true);
-      },
-    );
-    if (ok) {
-      setCurrentPassword("");
-      setNewPassword("");
-      setConfirmPassword("");
-      app.notify("密码已修改，其他设备已退出");
-      await app.refreshUser();
-    }
-  }
-  async function logout(all: boolean) {
+  async function logout() {
     const accepted = await app.confirm(
-      all ? "退出所有设备？" : "退出登录？",
-      all ? "所有设备的登录都会退出。" : "你将离开这个账号。",
-      all,
+      "退出登录？",
+      "这是 dkz12345 的统一账号，退出后其他网站也会一起退出。",
+      false,
     );
-    if (!accepted) return;
-    const ok = await mutation.run(() =>
-      api("POST", all ? "/auth/logout-all" : "/auth/logout"),
-    );
-    if (ok) {
-      app.notify(all ? "已退出所有设备" : "已退出登录");
-      window.dispatchEvent(new Event("nbd-auth-required"));
-      app.navigate("/login");
-      void app.refreshUser().catch(() => undefined);
-    }
+    if (accepted) await signOut(window.location.origin + "/");
   }
   async function downloadExport() {
     await mutation.run(async () => {
@@ -1881,82 +1814,6 @@ export function SettingsPage() {
           </Card>
           <Card className="settings-card">
             <div>
-              <h2>修改密码</h2>
-              <p>改完以后，其他设备上的登录会全部退出。</p>
-            </div>
-            <form
-              className="management-stack"
-              onSubmit={(event) => void savePassword(event)}
-            >
-              <Field label="当前密码">
-                <input
-                  type="password"
-                  autoComplete="current-password"
-                  required
-                  aria-invalid={passwordError || undefined}
-                  value={currentPassword}
-                  onChange={(event) => {
-                    setCurrentPassword(event.target.value);
-                    setPasswordError(false);
-                  }}
-                />
-                {passwordError && <span className="field-error">密码不对</span>}
-              </Field>
-              <Field
-                label="新密码"
-                hint={`至少 ${Math.max(12, app.meta.limits.passwordMin)} 位。`}
-              >
-                <input
-                  type="password"
-                  autoComplete="new-password"
-                  minLength={Math.max(12, app.meta.limits.passwordMin)}
-                  required
-                  value={newPassword}
-                  onChange={(event) => setNewPassword(event.target.value)}
-                />
-              </Field>
-              <Field label="再输一次新密码">
-                <input
-                  type="password"
-                  autoComplete="new-password"
-                  required
-                  aria-invalid={
-                    Boolean(
-                      confirmPassword && newPassword !== confirmPassword,
-                    ) || undefined
-                  }
-                  value={confirmPassword}
-                  onChange={(event) => setConfirmPassword(event.target.value)}
-                />
-                {confirmPassword && newPassword !== confirmPassword && (
-                  <span className="field-error">两次输入的新密码不一致</span>
-                )}
-              </Field>
-              {mutation.error != null &&
-              !(
-                mutation.error instanceof ApiError &&
-                mutation.error.code === "PASSWORD_INCORRECT"
-              ) ? (
-                <FormError error={mutation.error} />
-              ) : null}
-              <div className="actions">
-                <Button
-                  type="submit"
-                  tone="primary"
-                  disabled={
-                    mutation.pending ||
-                    mutation.retrySeconds > 0 ||
-                    newPassword.length < 12 ||
-                    newPassword !== confirmPassword
-                  }
-                >
-                  {mutation.pending ? "保存中…" : "修改密码"}
-                </Button>
-              </div>
-            </form>
-          </Card>
-          <Card className="settings-card">
-            <div>
               <h2>导出数据</h2>
               <p>
                 下载完整 JSON
@@ -1975,23 +1832,22 @@ export function SettingsPage() {
           </Card>
           <Card className="settings-card">
             <div>
-              <h2>登录</h2>
-              <p>一台设备 30 天没打开，会自动退出。</p>
+              <h2>账号与安全</h2>
+              <p>
+                用 dkz12345 统一账号登录。密码、两步验证和已登录的设备都在统一账号页管理；NBD
+                要求一小时内验证过两步验证。
+              </p>
             </div>
             <div className="management-row-actions">
-              <Button
-                onClick={() => void logout(false)}
-                disabled={mutation.pending || mutation.retrySeconds > 0}
+              <a
+                className="button button-secondary"
+                href={accountPageUrl()}
+                target="_blank"
+                rel="noopener"
               >
-                退出登录
-              </Button>
-              <Button
-                tone="danger"
-                onClick={() => void logout(true)}
-                disabled={mutation.pending || mutation.retrySeconds > 0}
-              >
-                退出所有设备
-              </Button>
+                管理统一账号
+              </a>
+              <Button onClick={() => void logout()}>退出登录</Button>
             </div>
           </Card>
           <p className="management-note">

@@ -6,7 +6,14 @@ import { openDb, migrate } from "../src/db/index.js";
 import { buildApp } from "../src/app.js";
 import { ownerPrincipal } from "../src/modules/principal.js";
 import { randomUUID } from "node:crypto";
+import {
+  createTestSigner,
+  TEST_PUBLISHABLE_KEY,
+} from "../src/lib/clerk-gate/test-signer.js";
 export const password = "Nbd-Test-Secret-2026";
+export const OWNER = "user_owner";
+// Clerk-shaped session tokens signed with a throwaway key: no network, no real instance.
+const signer = createTestSigner();
 export const momentInput = (changes: Record<string, unknown> = {}) => ({
   clientRequestId: randomUUID(),
   title: "周会叫错了名字",
@@ -32,6 +39,11 @@ export async function fixture(
         clientHosts: ["127.0.0.1"],
         redirectHosts: ["127.0.0.1"],
         publicDir: join(dir, "absent"),
+        clerk: {
+          publishableKey: TEST_PUBLISHABLE_KEY,
+          jwtKey: signer.jwtKey,
+          ownerUserId: OWNER,
+        },
       },
       {},
     ),
@@ -47,8 +59,14 @@ export async function fixture(
       scopes: ["read", "write"],
     }),
     token = issued.secret as string,
-    agent = s.access.authenticate(token),
-    cookie = `nbd_sid=${s.auth.issue(user.id)}`;
+    agent = s.access.authenticate(token);
+  // A Clerk __session cookie; by default the owner, both factors just verified.
+  const origin = config.publicOrigin;
+  const clerkCookie = (claims: Record<string, unknown> = {}) => {
+    const seconds = Math.floor(Date.now() / 1000);
+    return `__session=${signer.token({ sub: OWNER, azp: origin, iat: seconds, nbf: seconds - 5, exp: seconds + 3600, fva: [0, 0], ...claims })}`;
+  };
+  const cookie = clerkCookie();
   if (options.listen)
     config.publicOrigin = await app.listen({ host: "127.0.0.1", port: 0 });
   const api = (
@@ -74,6 +92,8 @@ export async function fixture(
     agent,
     token,
     cookie,
+    clerkCookie,
+    signer,
     api,
     setNow: (value: number) => {
       now = value;

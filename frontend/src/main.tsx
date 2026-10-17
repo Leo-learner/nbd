@@ -1,10 +1,4 @@
-import {
-  useCallback,
-  useEffect,
-  useRef,
-  useState,
-  type FormEvent,
-} from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { api, ApiError, type Meta, type User, type ResponseOf } from "./api";
 import {
@@ -13,11 +7,16 @@ import {
   Logo,
   Icon,
   Modal,
-  FormError,
   Loading,
   ErrorState,
   type UIContext,
 } from "./shared";
+import {
+  loadClerk,
+  requireSignIn,
+  signOut,
+  type ClerkLike,
+} from "./vendor/clerk-boot.js";
 import {
   Timeline,
   MomentPage,
@@ -51,6 +50,16 @@ const groups = [
     ["/settings/activity", "操作记录", "activity"],
   ],
 ];
+type Me = ResponseOf<"getMe">;
+type Access = Me["access"];
+// The OAuth consent page is served by the server, not this app: come back to it with a full page load.
+function oauthNext(value: string | null) {
+  if (!value?.startsWith("/oauth/authorize?")) return null;
+  const url = new URL(value, location.origin);
+  return url.origin === location.origin && url.pathname === "/oauth/authorize"
+    ? url.pathname + url.search
+    : null;
+}
 function safeNext(value: string | null) {
   if (
     !value ||
@@ -65,38 +74,23 @@ function safeNext(value: string | null) {
     ? url.pathname + url.search
     : "/";
 }
-function Login({ onLogin }: { onLogin: (user: User) => void }) {
-  const [error, setError] = useState<unknown>(),
-    [pending, setPending] = useState(false),
-    [until, setUntil] = useState(0),
-    [now, setNow] = useState(Date.now());
-  useEffect(() => {
-    if (until > Date.now()) {
-      const id = setInterval(() => setNow(Date.now()), 500);
-      return () => clearInterval(id);
-    }
-  }, [until]);
-  async function submit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (pending || until > Date.now()) return;
-    const data = new FormData(event.currentTarget);
-    setPending(true);
-    setError(undefined);
-    try {
-      const result = await api<ResponseOf<"login">>("POST", "/auth/login", {
-        username: data.get("username"),
-        password: data.get("password"),
-      });
-      onLogin(result.user);
-    } catch (e) {
-      setError(e);
-      if (e instanceof ApiError && e.retryAfter)
-        setUntil(Date.now() + e.retryAfter * 1000);
-    } finally {
-      setPending(false);
-    }
-  }
-  const remaining = Math.max(0, Math.ceil((until - now) / 1000));
+// Sign-in happens on the shared dkz12345 account page; this screen only says
+// why NBD is not open yet and offers the one action that fixes it.
+function Gate({ access }: { access: Exclude<Access, "owner"> }) {
+  const copy =
+    access === "reauth-required"
+      ? {
+          title: "需要重新验证身份",
+          body: "为了保护私人记录，NBD 要求一小时内验证过密码和两步验证。点下面的按钮会退出统一账号，重新登录后自动回到这里。",
+          action: "重新验证",
+        }
+      : access === "not-owner"
+        ? {
+            title: "这个账号不能进入 NBD",
+            body: "这是一个只给主人用的私人网站。如果你是主人，请换成你的账号登录。",
+            action: "换一个账号",
+          }
+        : null;
   return (
     <div className="login-layout">
       <section className="login-art" aria-hidden="true">
@@ -122,40 +116,20 @@ function Login({ onLogin }: { onLogin: (user: User) => void }) {
       <main className="login-form">
         <div className="login-content">
           <Logo large />
-          <form onSubmit={submit}>
-            <label className="form-field">
-              用户名
-              <input
-                name="username"
-                autoComplete="username"
-                required
-                maxLength={20}
-                autoFocus
-              />
-            </label>
-            <label className="form-field">
-              密码
-              <input
-                name="password"
-                type="password"
-                autoComplete="current-password"
-                required
-                maxLength={128}
-              />
-            </label>
-            <FormError error={error} />
-            <Button
-              tone="primary"
-              type="submit"
-              disabled={pending || remaining > 0}
-            >
-              {remaining > 0
-                ? `${remaining} 秒后重试`
-                : pending
-                  ? "登录中…"
-                  : "登录"}
-            </Button>
-          </form>
+          {copy ? (
+            <>
+              <h1>{copy.title}</h1>
+              <p>{copy.body}</p>
+              <Button
+                tone="primary"
+                onClick={() => void signOut(location.href)}
+              >
+                {copy.action}
+              </Button>
+            </>
+          ) : (
+            <p role="status">正在前往 dkz12345 统一账号登录…</p>
+          )}
           <p className="login-footnote">
             这是一个只给一个人用的私人网站。
             <br />
@@ -169,6 +143,7 @@ function Login({ onLogin }: { onLogin: (user: User) => void }) {
 function App() {
   const [route, setRoute] = useState(location.pathname + location.search),
     [user, setUser] = useState<User | null>(),
+    [access, setAccess] = useState<Access>(),
     [meta, setMeta] = useState<Meta>(),
     [startupError, setStartupError] = useState<unknown>();
   const [menu, setMenu] = useState(false),
@@ -188,15 +163,27 @@ function App() {
   const toastTimer = useRef<ReturnType<typeof setTimeout> | undefined>(
     undefined,
   );
+  const clerk = useRef<ClerkLike | null>(null);
   const load = useCallback(async () => {
     setStartupError(undefined);
     try {
-      const [me, m] = await Promise.all([
-        api<ResponseOf<"getMe">>("GET", "/auth/me"),
-        api<Meta>("GET", "/meta"),
-      ]);
+      // Loading clerk-js also refreshes this site's short-lived __session cookie.
+      clerk.current ??= await loadClerk().catch(() => null);
+      let me = await api<Me>("GET", "/auth/me");
+      if (me.access === "signed-out" && clerk.current?.session) {
+        await clerk.current.session.getToken({ skipCache: true });
+        me = await api<Me>("GET", "/auth/me");
+      }
+      setMeta(await api<Meta>("GET", "/meta"));
+      if (me.access === "signed-out" && !clerk.current)
+        throw new ApiError(
+          0,
+          "NETWORK_ERROR",
+          "登录服务暂时连不上，请稍后重试",
+        );
       setUser(me.user);
-      setMeta(m);
+      setAccess(me.access);
+      if (me.access === "signed-out") await requireSignIn(location.href);
     } catch (e) {
       setStartupError(e);
     }
@@ -280,29 +267,54 @@ function App() {
         window.scrollTo(0, 0);
       }
     };
-    const expired = () => {
+    // A 401 usually means the one-minute Clerk token went stale: load() refreshes
+    // it, and only sends the owner to sign in if that does not help.
+    const expired = () => void load();
+    const denied = (event: Event) => {
       setUser(null);
-      perform(
-        `/login?next=${encodeURIComponent(safeNext(location.pathname + location.search))}`,
-        true,
+      setAccess(
+        (event as CustomEvent<string>).detail === "NOT_OWNER"
+          ? "not-owner"
+          : "reauth-required",
       );
     };
     const sync = () => setRoute(location.pathname + location.search);
     document.addEventListener("click", click);
     window.addEventListener("popstate", pop);
     window.addEventListener("nbd-auth-required", expired);
+    window.addEventListener("nbd-access-denied", denied);
     window.addEventListener("nbd-route-changed", sync);
     return () => {
       document.removeEventListener("click", click);
       window.removeEventListener("popstate", pop);
       window.removeEventListener("nbd-auth-required", expired);
+      window.removeEventListener("nbd-access-denied", denied);
       window.removeEventListener("nbd-route-changed", sync);
     };
-  }, [navigate, perform, route]);
+  }, [navigate, perform, route, load]);
   useEffect(() => {
     if (user === null && !route.startsWith("/login"))
       perform(`/login?next=${encodeURIComponent(safeNext(route))}`, true);
+    // Signed in: leave the sign-in route for where the owner was going.
+    if (user && route.startsWith("/login")) {
+      const next = new URLSearchParams(route.split("?")[1] ?? "").get("next");
+      const oauth = oauthNext(next);
+      if (oauth) location.replace(oauth);
+      else perform(safeNext(next), true);
+    }
   }, [user, route, perform]);
+  // Follow sign-in and sign-out on other tabs and other dkz12345 sites.
+  useEffect(() => {
+    if (!meta || !clerk.current) return;
+    let seen = clerk.current.user?.id ?? null;
+    return clerk.current.addListener(({ user: next }) => {
+      const id = next?.id ?? null;
+      if (id !== seen) {
+        seen = id;
+        void load();
+      }
+    });
+  }, [meta, load]);
   const notify: UIContext["notify"] = (message, action) => {
     clearTimeout(toastTimer.current);
     setToast({ message, action });
@@ -348,15 +360,7 @@ function App() {
     );
   if (user === null)
     return (
-      <Login
-        onLogin={(u) => {
-          setUser(u);
-          perform(
-            safeNext(new URLSearchParams(location.search).get("next")),
-            true,
-          );
-        }}
-      />
+      <Gate access={access === "owner" || !access ? "signed-out" : access} />
     );
   const path = route.split("?")[0],
     match = path.match(/^\/moments\/([^/]+)(?:\/(reflect|revisions))?$/),
@@ -376,7 +380,9 @@ function App() {
     ) : (
       <MomentPage id={id} />
     );
-  } else if (path === "/" || path === "/login") page = <Timeline />;
+  } else if (path === "/") page = <Timeline />;
+  // Signed in on the sign-in route: the effect above is about to leave for `next`.
+  else if (path === "/login") page = <Loading />;
   else if (path === "/insights") page = <InsightsPage />;
   else if (path === "/lessons" || /^\/lessons\/[^/]+$/.test(path))
     page = <LessonsPage id={path.split("/")[2]} />;
@@ -397,13 +403,13 @@ function App() {
     : (groups.flat().find((item) => item[0] === path)?.[1] ??
       (path.startsWith("/lessons/") ? "经验库" : "NBD"));
   const logout = async () => {
-    try {
-      await api("POST", "/auth/logout");
-      setUser(null);
-      perform("/login", true);
-    } catch (e) {
-      report(e);
-    }
+    if (
+      await confirm(
+        "退出登录？",
+        "这是 dkz12345 的统一账号，退出后其他网站也会一起退出。",
+      )
+    )
+      await signOut(location.origin + "/");
   };
   const nav = (
     <>

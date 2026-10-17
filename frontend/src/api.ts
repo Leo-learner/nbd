@@ -47,8 +47,12 @@ export async function api<T>(
     );
     if (error.code === "STORAGE_BUSY" && method === "GET" && !retried)
       return api(method, path, body, headers, true);
-    if (error.status === 401 && path !== "/auth/login")
+    if (error.status === 401)
       window.dispatchEvent(new Event("nbd-auth-required"));
+    if (error.code === "NOT_OWNER" || error.code === "REAUTH_REQUIRED")
+      window.dispatchEvent(
+        new CustomEvent("nbd-access-denied", { detail: error.code }),
+      );
     throw error;
   }
   return data as T;

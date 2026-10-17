@@ -1,14 +1,13 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { fixture, password } from "./fixture.js";
+import { fixture } from "./fixture.js";
 
-test("单一所有者能查看匿名登录失败，成功登录显示用户名且不包含任意匿名事件", async () => {
+test("单一所有者仍能查看历史匿名登录失败；本人操作显示用户名且不包含任意匿名事件", async () => {
   const f = await fixture();
   try {
-    await f.api("POST", "/auth/login", {
-      username: "leo",
-      password: "incorrect",
-    });
+    // Password login is gone; failures recorded before the switch must stay visible.
+    const historic = f.s.audit.start(null, "auth.login", "web");
+    f.s.audit.finish(historic, "error", "INVALID_CREDENTIALS");
     const other = f.s.audit.start(null, "unrelated.event", "web");
     f.s.audit.finish(other, "error", "TEST");
     const failure = f.s.data.audit(f.owner, {}).items;
@@ -21,12 +20,12 @@ test("单一所有者能查看匿名登录失败，成功登录显示用户名�
       ),
     );
     assert.ok(!failure.some((item: any) => item.action === "unrelated.event"));
-    await f.api("POST", "/auth/login", { username: "LEO", password });
+    await f.api("PATCH", "/settings", { timezone: "Asia/Shanghai" });
     const success = f.s.data
       .audit(f.owner, {})
       .items.find(
         (item: any) =>
-          item.action === "auth.login" && item.status === "success",
+          item.action === "updateSettings" && item.status === "success",
       );
     assert.equal(success.actor.kind, "owner");
     assert.equal(success.actor.label, "leo");

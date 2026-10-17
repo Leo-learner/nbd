@@ -206,17 +206,12 @@ export class OAuthService {
     insert(this.db, "oauth_requests", request);
     return { request, csrf, client };
   }
-  form(
-    r: Row,
-    csrf: string,
-    client: Row,
-    loggedIn: boolean,
-    retry?: { message: string; selected: Row },
-  ): string {
+  /** Consent page for the signed-in owner; `returnTo` brings a slow click back here after re-checking the session. */
+  form(r: Row, csrf: string, client: Row, returnTo: string): string {
     const scopes = JSON.parse(r.scopes_json) as string[],
       field = (name: string, value: string) =>
         `<input type="hidden" name="${name}" value="${escapeHtml(value)}">`;
-    return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>NBD · 授权确认</title><style> *{box-sizing:border-box}body{margin:0;background:#f5f3ee;color:#272d29;font:16px/1.6 system-ui,sans-serif;padding:24px}main{max-width:520px;margin:8vh auto;background:#fff;padding:32px;border-radius:20px;border:1px solid #dddcd4}h1{margin-top:0}p{overflow-wrap:anywhere}.identity{font-size:14px;color:#58615b}label{display:block;margin:16px 0}input:not([type=checkbox]){display:block;width:100%;font:inherit;padding:10px;border:1px solid #b5bdb5;border-radius:8px}input[type=checkbox]{width:18px;height:18px;vertical-align:middle;margin-right:8px}button{font:inherit;padding:12px 20px;min-height:44px;border:1px solid #3b5947;border-radius:8px;background:#3b5947;color:#fff;margin:4px 8px 4px 0}button[value=deny]{background:#fff;color:#3b5947}.error{padding:12px;border-radius:8px;background:#fff0ed;color:#9b3425}@media(max-width:540px){body{padding:16px}main{margin:16px auto;padding:24px}button{width:100%}}</style></head><body><main><h1>连接 NBD</h1><p>${escapeHtml(client.client_name)} 请求访问你的私人记录。</p><p class="identity">客户端：${escapeHtml(new URL(r.client_id).hostname)}<br>回调：${escapeHtml(new URL(r.redirect_uri).hostname)}</p>${retry ? `<p class="error" role="alert">${escapeHtml(retry.message)}</p>` : ""}<form method="post" action="/oauth/authorize">${field("requestId", r.id)}${field("csrf", csrf)}${loggedIn ? "" : '<label>用户名 <input name="username" autocomplete="username" required></label><label>密码 <input type="password" name="password" autocomplete="current-password" required></label>'}${scopes.map((s) => `<label><input type="checkbox" name="${s}" value="1"${!retry || retry.selected[s] === "1" ? " checked" : ""}>${s === "read" ? "读取历史" : "记录与补记"}</label>`).join("")}<p><button name="decision" value="approve">同意连接</button> <button name="decision" value="deny" formnovalidate>拒绝</button></p></form></main></body></html>`;
+    return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>NBD · 授权确认</title><style> *{box-sizing:border-box}body{margin:0;background:#f5f3ee;color:#272d29;font:16px/1.6 system-ui,sans-serif;padding:24px}main{max-width:520px;margin:8vh auto;background:#fff;padding:32px;border-radius:20px;border:1px solid #dddcd4}h1{margin-top:0}p{overflow-wrap:anywhere}.identity{font-size:14px;color:#58615b}label{display:block;margin:16px 0}input:not([type=checkbox]){display:block;width:100%;font:inherit;padding:10px;border:1px solid #b5bdb5;border-radius:8px}input[type=checkbox]{width:18px;height:18px;vertical-align:middle;margin-right:8px}button{font:inherit;padding:12px 20px;min-height:44px;border:1px solid #3b5947;border-radius:8px;background:#3b5947;color:#fff;margin:4px 8px 4px 0}button[value=deny]{background:#fff;color:#3b5947}.error{padding:12px;border-radius:8px;background:#fff0ed;color:#9b3425}@media(max-width:540px){body{padding:16px}main{margin:16px auto;padding:24px}button{width:100%}}</style></head><body><main><h1>连接 NBD</h1><p>${escapeHtml(client.client_name)} 请求访问你的私人记录。</p><p class="identity">客户端：${escapeHtml(new URL(r.client_id).hostname)}<br>回调：${escapeHtml(new URL(r.redirect_uri).hostname)}</p><form method="post" action="/oauth/authorize">${field("requestId", r.id)}${field("csrf", csrf)}${field("returnTo", returnTo)}${scopes.map((s) => `<label><input type="checkbox" name="${s}" value="1" checked>${s === "read" ? "读取历史" : "记录与补记"}</label>`).join("")}<p><button name="decision" value="approve">同意连接</button> <button name="decision" value="deny" formnovalidate>拒绝</button></p></form></main></body></html>`;
   }
   consentRequest(body: Row, csrfCookie: string | undefined): Row {
     if (typeof body.requestId !== "string")
@@ -237,9 +232,8 @@ export class OAuthService {
   async approve(
     body: Row,
     csrfCookie: string | undefined,
-    sessionToken?: string,
-    context?: { requestId: string; ip: string },
-  ): Promise<{ redirect: string; session?: string }> {
+    user: Row,
+  ): Promise<{ redirect: string }> {
     const r = this.consentRequest(body, csrfCookie);
     if (!["approve", "deny"].includes(body.decision))
       error("invalid_request", "Consent decision is required");
@@ -251,36 +245,6 @@ export class OAuthService {
       redirect.searchParams.set("error", "access_denied");
       return { redirect: redirect.href };
     }
-    let user = this.auth.lookup(sessionToken)?.user,
-      session: string | undefined;
-    if (!user) {
-      if (
-        typeof body.username !== "string" ||
-        typeof body.password !== "string" ||
-        body.password.length > 128
-      )
-        error("invalid_request", "Login credentials are required");
-      const loginAudit = this.audit.start(
-        null,
-        "oauth.login",
-        "oauth",
-        context?.requestId,
-        context?.ip,
-      );
-      try {
-        user = await this.auth.login(body.username, body.password);
-        session = this.auth.issue(user.id, sessionToken);
-        this.audit.attachUser(loginAudit, user.id);
-        this.audit.finish(loginAudit, "success");
-      } catch (e) {
-        this.audit.finish(
-          loginAudit,
-          "error",
-          e instanceof AppError ? e.code : "INTERNAL_ERROR",
-        );
-        throw e;
-      }
-    }
     const requested = JSON.parse(r.scopes_json) as string[],
       scopes = requested.filter((s) => body[s] === "1");
     if (!scopes.length) error("invalid_scope", "Choose at least one scope");
@@ -291,11 +255,6 @@ export class OAuthService {
     try {
       this.db
         .transaction(() => {
-          if (this.auth.user(user!.id).password_hash !== user!.password_hash)
-            error(
-              "invalid_request",
-              "Credentials changed; please log in again",
-            );
           if (
             this.db
               .prepare("DELETE FROM oauth_requests WHERE id=? AND expires_at>?")
@@ -342,7 +301,7 @@ export class OAuthService {
       throw e;
     }
     redirect.searchParams.set("code", code);
-    return { redirect: redirect.href, session };
+    return { redirect: redirect.href };
   }
   mint(grant: Row, scopesJson: string): Row {
     const now = this.config.now(),

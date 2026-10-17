@@ -1,9 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { fixture, momentInput, password } from "./fixture.js";
+import { fixture, momentInput, password, OWNER } from "./fixture.js";
+import { createTestSigner } from "../src/lib/clerk-gate/test-signer.js";
 import { DAY } from "../src/time.js";
 import { apiContract } from "../src/contract.js";
-test("48 个 REST 路由均注册；未登录时机密端点拒绝访问", async () => {
+test("44 个 REST 路由均注册；未登录时机密端点拒绝访问", async () => {
   const f = await fixture();
   try {
     let count = 0;
@@ -19,8 +20,6 @@ test("48 个 REST 路由均注册；未登录时机密端点拒绝访问", async
             "getReady",
             "getMeta",
             "getMe",
-            "login",
-            "logout",
           ].includes(op.operationId)
         )
           continue;
@@ -32,10 +31,13 @@ test("48 个 REST 路由均注册；未登录时机密端点拒绝访问", async
         );
       }
     }
-    assert.equal(count, 48);
+    assert.equal(count, 44);
     const r = await f.app.inject("/api/v1/moments");
     assert.equal(r.statusCode, 401);
-    assert.equal((await f.app.inject("/api/v1/auth/me")).json().user, null);
+    assert.deepEqual((await f.app.inject("/api/v1/auth/me")).json(), {
+      user: null,
+      access: "signed-out",
+    });
   } finally {
     await f.close();
   }
@@ -46,9 +48,10 @@ test("请求头、恶意 Origin、未知字段、注册入口和 API 404", async
     assert.equal(
       (
         await f.app.inject({
-          method: "POST",
-          url: "/api/v1/auth/login",
-          payload: { username: "leo", password },
+          method: "PATCH",
+          url: "/api/v1/settings",
+          headers: { cookie: f.cookie },
+          payload: { timezone: "Asia/Shanghai" },
         })
       ).json().error.code,
       "REQUEST_HEADER_REQUIRED",
@@ -85,51 +88,50 @@ test("请求头、恶意 Origin、未知字段、注册入口和 API 404", async
     await f.close();
   }
 });
-test("大小写登录、会话续期、密码轮换、退出全部和错误密码", async () => {
+test("统一账号会话：只认主人、新鲜的两步验证和本站签发的令牌", async () => {
   const f = await fixture();
   try {
-    assert.equal(
-      (
-        await f.api("POST", "/auth/login", {
-          username: "LEO",
-          password: "wrong",
-        })
-      ).statusCode,
-      401,
-    );
-    const login = await f.api("POST", "/auth/login", {
-      username: "LEO",
-      password,
+    const seconds = Math.floor(Date.now() / 1000);
+    const as = (cookie: string) => ({ cookie });
+    const me = async (cookie: string) =>
+      (await f.api("GET", "/auth/me", undefined, as(cookie))).json();
+    const list = async (cookie: string) =>
+      (await f.api("GET", "/moments", undefined, as(cookie))).json();
+    assert.deepEqual(await me(f.cookie), {
+      user: (await me(f.cookie)).user,
+      access: "owner",
     });
-    assert.equal(login.statusCode, 200);
-    const cookie = String(login.headers["set-cookie"]).split(";")[0]!;
-    f.setNow(f.getNow() + DAY + 1);
-    const me = await f.api("GET", "/auth/me", undefined, { cookie });
-    assert.equal(me.json().user.username, "leo");
-    assert.ok(me.headers["set-cookie"]);
-    const changed = await f.api(
-      "PUT",
-      "/auth/password",
-      { currentPassword: password, newPassword: password + "-new" },
-      { cookie },
-    );
-    assert.equal(changed.statusCode, 200);
-    assert.equal((await f.api("GET", "/auth/me")).json().user, null);
-    const next = String(changed.headers["set-cookie"]).split(";")[0]!;
-    assert.equal(
-      (await f.api("GET", "/auth/me", undefined, { cookie: next })).json().user
-        .username,
-      "leo",
-    );
-    assert.equal(
-      (await f.api("POST", "/auth/logout-all", undefined, { cookie: next }))
-        .statusCode,
-      200,
-    );
-    assert.equal(
-      (await f.api("GET", "/auth/me", undefined, { cookie: next })).json().user,
-      null,
-    );
+    assert.equal((await me(f.cookie)).user.username, "leo");
+    for (const [why, cookie] of [
+      ["no cookie", ""],
+      ["expired", f.clerkCookie({ iat: seconds - 600, nbf: seconds - 600, exp: seconds - 300 })],
+      ["minted for another site", f.clerkCookie({ azp: "https://games.dkz12345.com" })],
+      ["another issuer", f.clerkCookie({ iss: "https://clerk.example.com" })],
+      ["foreign key", `__session=${createTestSigner().token({ sub: OWNER, azp: f.config.publicOrigin, fva: [0, 0] })}`],
+    ]) {
+      assert.equal((await me(cookie!)).access, "signed-out", why);
+      assert.equal((await list(cookie!)).error.code, "UNAUTHENTICATED", why);
+    }
+    const stranger = f.clerkCookie({ sub: "user_someone_else" });
+    assert.deepEqual(await me(stranger), { user: null, access: "not-owner" });
+    assert.equal((await list(stranger)).error.code, "NOT_OWNER");
+    for (const fva of [[61, 0], [0, 61], [0, -1]]) {
+      const stale = f.clerkCookie({ fva });
+      assert.deepEqual(await me(stale), { user: null, access: "reauth-required" }, String(fva));
+      assert.equal((await list(stale)).error.code, "REAUTH_REQUIRED", String(fva));
+    }
+    assert.equal((await list(f.clerkCookie({ fva: [59, 59] }))).items.length, 0);
+    for (const [method, url] of [
+      ["POST", "/auth/login"],
+      ["POST", "/auth/logout"],
+      ["POST", "/auth/logout-all"],
+      ["PUT", "/auth/password"],
+    ])
+      assert.equal(
+        (await f.api(method!, url!, { username: "leo", password })).statusCode,
+        404,
+        url,
+      );
   } finally {
     await f.close();
   }
@@ -419,23 +421,35 @@ test("标签改名、重名、合并和删除", async () => {
     await f.close();
   }
 });
-test("密钥密码确认、签发、撤销，以及 settings/export/audit", async () => {
+test("密钥签发不再要密码、撤销，以及 settings/export/audit", async () => {
   const f = await fixture();
   try {
+    // The old password field is now an unknown field.
     assert.equal(
       (
         await f.api("POST", "/agent-keys", {
           label: "测试",
           scopes: ["write"],
-          currentPassword: "incorrect",
+          currentPassword: password,
         })
       ).json().error.code,
-      "PASSWORD_INCORRECT",
+      "VALIDATION_ERROR",
+    );
+    // A stale owner session cannot mint a long-lived key.
+    assert.equal(
+      (
+        await f.api(
+          "POST",
+          "/agent-keys",
+          { label: "测试", scopes: ["write"] },
+          { cookie: f.clerkCookie({ fva: [90, 90] }) },
+        )
+      ).json().error.code,
+      "REAUTH_REQUIRED",
     );
     const issued = await f.api("POST", "/agent-keys", {
       label: "只写测试",
       scopes: ["write"],
-      currentPassword: password,
     });
     assert.equal(issued.statusCode, 201, issued.body);
     assert.equal((await f.api("GET", "/agent-keys")).json().items.length, 2);

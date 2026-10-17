@@ -1,4 +1,11 @@
+import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
+/** Shared dkz12345 Clerk login: public values only (no Clerk secret key). */
+export interface ClerkConfig {
+  publishableKey: string;
+  jwtKey: string;
+  ownerUserId: string;
+}
 export interface Config {
   env: string;
   host: string;
@@ -27,6 +34,7 @@ export interface Config {
   logger: boolean;
   logLevel: string;
   now: () => number;
+  clerk: ClerkConfig | null;
 }
 export function createConfig(
   overrides: Partial<Config> = {},
@@ -48,6 +56,19 @@ export function createConfig(
       .split(",")
       .map((x) => x.trim())
       .filter(Boolean);
+  const clerk = (): ClerkConfig | null => {
+    const publishableKey = env.CLERK_PUBLISHABLE_KEY,
+      jwtKey = env.CLERK_JWT_KEY_FILE
+        ? readFileSync(env.CLERK_JWT_KEY_FILE, "utf8")
+        : env.CLERK_JWT_KEY?.replace(/\\n/g, "\n"),
+      ownerUserId = env.OWNER_CLERK_USER_ID;
+    if (!publishableKey && !jwtKey && !ownerUserId) return null;
+    if (!publishableKey || !jwtKey || !ownerUserId?.startsWith("user_"))
+      throw new Error(
+        "CLERK_PUBLISHABLE_KEY, CLERK_JWT_KEY(_FILE) and OWNER_CLERK_USER_ID must be set together",
+      );
+    return { publishableKey, jwtKey, ownerUserId };
+  };
   const schedule = list("REVIEW_SCHEDULE_DAYS", "3,14,60");
   if (!schedule.length || schedule.some((x) => !/^[1-9]\d*$/.test(x)))
     throw new Error("Invalid REVIEW_SCHEDULE_DAYS");
@@ -85,6 +106,7 @@ export function createConfig(
     logger: true,
     logLevel: env.LOG_LEVEL ?? "info",
     now: Date.now,
+    clerk: clerk(),
     ...overrides,
   };
   const url = new URL(config.publicOrigin);
@@ -102,6 +124,8 @@ export function createConfig(
     (!config.secureCookie || url.protocol !== "https:")
   )
     throw new Error("Production requires HTTPS and secure cookies");
+  if (config.env === "production" && !config.clerk)
+    throw new Error("Production requires the Clerk sign-in settings");
   new Intl.DateTimeFormat("en-CA", { timeZone: config.timezone });
   if (
     config.scheduleDays.some(

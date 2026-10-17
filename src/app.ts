@@ -19,7 +19,7 @@ import { createServices, type Services } from "./services.js";
 import { apiContract, dereference } from "./contract.js";
 import { AppError, fail } from "./errors.js";
 import { OAuthError, escapeHtml } from "./oauth/service.js";
-import { registerApi, cookieName, setSession } from "./routes/api.js";
+import { registerApi } from "./routes/api.js";
 import { createMcpServer } from "./mcp/tools.js";
 import type { Principal } from "./modules/principal.js";
 declare module "fastify" {
@@ -27,8 +27,10 @@ declare module "fastify" {
     services: Services;
   }
 }
+// clerk-js (headless, for the shared dkz12345 account) loads from our Clerk Frontend API and
+// pulls in Clerk Protect from *.protect.clerk.com, as Clerk's CSP guide lists.
 const csp =
-  "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; font-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'";
+  "default-src 'self'; script-src 'self' https://clerk.dkz12345.com https://*.protect.clerk.com; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' https://clerk.dkz12345.com https://*.protect.clerk.com:*; frame-src 'self' https://*.protect.clerk.com; worker-src 'self' blob:; font-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'";
 export async function buildApp(
   config: Config,
   deps: { db?: Db; fetcher?: typeof fetch } = {},
@@ -36,7 +38,6 @@ export async function buildApp(
   const db = deps.db ?? openDb(config.dataDir);
   assertMigrated(db);
   const s = createServices(db, config, deps.fetcher);
-  await s.auth.init();
   const app = Fastify({
     bodyLimit: 256 * 1024,
     requestTimeout: 30000,
@@ -78,7 +79,7 @@ export async function buildApp(
       servers: [{ url: config.publicOrigin }],
       components: {
         securitySchemes: {
-          cookieAuth: { type: "apiKey", in: "cookie", name: cookieName(s) },
+          cookieAuth: { type: "apiKey", in: "cookie", name: "__session" },
         },
       },
     },
@@ -321,6 +322,14 @@ export async function buildApp(
       },
       async (req, reply) => {
         const begin = await s.oauth.begin(req.query as Row);
+        // Not signed in, stale, or someone else: the app sorts that out with the
+        // shared account and comes back here.
+        const access = await s.owner.check(req.headers);
+        if (!access.ok)
+          return reply.redirect(
+            `/login?next=${encodeURIComponent(req.url)}`,
+            303,
+          );
         const callback = new URL(begin.request.redirect_uri).origin;
         reply.header(
           "Content-Security-Policy",
@@ -336,12 +345,7 @@ export async function buildApp(
         return reply
           .type("text/html; charset=utf-8")
           .send(
-            s.oauth.form(
-              begin.request,
-              begin.csrf,
-              begin.client,
-              !!s.auth.lookup(req.cookies[cookieName(s)]),
-            ),
+            s.oauth.form(begin.request, begin.csrf, begin.client, req.url),
           );
       },
     );
@@ -358,39 +362,26 @@ export async function buildApp(
           req.headers.origin !== config.publicOrigin
         )
           throw new OAuthError("invalid_request", "Invalid Origin", 403);
-        let result;
-        try {
-          result = await s.oauth.approve(
-            req.body as Row,
-            req.cookies[csrfCookie],
-            req.cookies[cookieName(s)],
-            { requestId: req.id, ip: req.ip },
+        const body = req.body as Row;
+        // The Clerk token lives about a minute and nothing refreshes it on this
+        // page, so a slow click comes back through the app and then here again.
+        const access = await s.owner.check(req.headers);
+        if (!access.ok) {
+          const back =
+            typeof body?.returnTo === "string" &&
+            body.returnTo.startsWith("/oauth/authorize?")
+              ? body.returnTo
+              : "/";
+          return reply.redirect(
+            `/login?next=${encodeURIComponent(back)}`,
+            303,
           );
-        } catch (e) {
-          if (!(e instanceof AppError) || e.code !== "INVALID_CREDENTIALS")
-            throw e;
-          const body = req.body as Row,
-            request = s.oauth.consentRequest(body, req.cookies[csrfCookie]),
-            client = await s.oauth.client(request.client_id),
-            callback = new URL(request.redirect_uri).origin;
-          return reply
-            .header(
-              "Content-Security-Policy",
-              csp.replace(
-                "form-action 'self'",
-                `form-action 'self' ${callback}`,
-              ),
-            )
-            .code(401)
-            .type("text/html; charset=utf-8")
-            .send(
-              s.oauth.form(request, body.csrf, client, false, {
-                message: "用户名或密码错误，请重试。",
-                selected: body,
-              }),
-            );
         }
-        if (result.session) setSession(reply, s, result.session);
+        const result = await s.oauth.approve(
+          body,
+          req.cookies[csrfCookie],
+          access.user,
+        );
         reply.clearCookie(csrfCookie, {
           path: "/",
           secure: config.secureCookie,
